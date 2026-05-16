@@ -1,6 +1,7 @@
 import os
 import datetime
 import time
+import json
 from src.config import Config
 from src.monitor import fetch_feed, fetch_video_metrics, fetch_transcript
 from src.selector import select_topic, rank_shorts, reframe_transcript
@@ -22,9 +23,14 @@ def process_short_approval(video_id, title):
         print(f"No transcript found for {video_id}")
         return
 
-    # 2. Reframe via Gemini
-    print("Reframing transcript via Gemini...")
-    reframed_script = reframe_transcript(transcript)
+    # 2. Reframe via Gemini (Strategy A: Dual-Mode)
+    print("Reframing transcript via Gemini (Dual-Mode)...")
+    reframed_data = reframe_transcript(transcript)
+    
+    if "error" in reframed_data:
+        from src.telegram_bot import send_message
+        send_message(f"❌ Gemini Reframing Error: {reframed_data['error']}")
+        return
 
     # 3. Create directory structure
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -34,14 +40,34 @@ def process_short_approval(video_id, title):
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    # 4. Generate audio via Inworld
-    audio_file = os.path.join(output_path, "audio.mp3")
-    print("Generating TTS via Inworld...")
-    generate_tts(reframed_script, audio_file)
+    # Save the reframed scripts as JSON for reference
+    with open(os.path.join(output_path, "scripts.json"), "w", encoding="utf-8") as f:
+        json.dump(reframed_data, f, indent=2)
 
-    # 5. Notify user via Telegram
-    from src.telegram_bot import send_message
-    send_message(f"✅ Production completed for: {title}\nFiles saved in: {output_path}")
+    # 4. Generate audio ONLY for viral version
+    v_data = reframed_data.get("viral_version")
+    if v_data:
+        full_text = f"{v_data['hook']} {v_data['body']} {v_data['cta']}"
+        audio_file = os.path.join(output_path, "audio_viral_version.mp3")
+        print(f"Generating TTS for viral_version via Inworld...")
+        try:
+            generate_tts(full_text, audio_file)
+        except Exception as e:
+            print(f"TTS Error for viral_version: {e}")
+
+    # 5. Notify and send files
+    from src.telegram_bot import send_message, send_file, send_audio
+    send_message(f"✅ Production completed for: {title}\nViral MP3 and Scripts generated.")
+    
+    scripts_file = os.path.join(output_path, "scripts.json")
+    send_file(scripts_file, caption=f"Scripts for {title}")
+    
+    audio_file = os.path.join(output_path, "audio_viral_version.mp3")
+    if os.path.exists(audio_file):
+        send_audio(audio_file, caption=f"Viral Version - {title}", title=f"Viral - {video_id}")
+    else:
+        send_message(f"❌ Error: Viral MP3 was not generated for {title}")
+
     print(f"Production completed for {video_id}")
 
 def run_automation(video_data=None):
@@ -81,13 +107,16 @@ def run_automation(video_data=None):
 
     # Rank shorts
     ranked = rank_shorts(all_shorts)
-    top_video = ranked[0]
     
-    print(f"Top video identified: {top_video['title']} with view velocity {top_video.get('velocity', 0):.2f}")
+    # Send top 5 for approval
+    top_n = ranked[:5]
+    print(f"Identifying top {len(top_n)} videos for approval.")
     
-    # Send for approval
-    send_approval_request(top_video)
-    print("Approval request sent to Telegram. Waiting for user to click GO...")
+    for i, video in enumerate(top_n):
+        print(f"Sending recommendation {i+1}: {video['title']} (Velocity: {video.get('velocity', 0):.2f})")
+        send_approval_request(video)
+        
+    print(f"Sent {len(top_n)} approval requests to Telegram. Waiting for user to click GO on any of them...")
 
 if __name__ == "__main__":
     run_automation()
