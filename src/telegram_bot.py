@@ -1,5 +1,7 @@
 import requests
 import time
+import os
+import asyncio
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 from src.config import Config
@@ -17,8 +19,8 @@ def send_message(text):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
+        "text": text
+        # Removed parse_mode: Markdown to avoid errors on unescaped text
     }
     try:
         response = requests.post(url, json=payload)
@@ -26,9 +28,51 @@ def send_message(text):
     except Exception as e:
         print(f"Failed to send Telegram message: {e}")
 
+def send_file(file_path, caption=None):
+    """
+    Sends a file to the configured Telegram chat.
+    """
+    token = Config.TELEGRAM_BOT_TOKEN
+    chat_id = Config.TELEGRAM_CHAT_ID
+    if not token or not chat_id or not os.path.exists(file_path):
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    try:
+        with open(file_path, "rb") as f:
+            files = {"document": f}
+            payload = {"chat_id": chat_id, "caption": caption}
+            response = requests.post(url, data=payload, files=files)
+            response.raise_for_status()
+    except Exception as e:
+        print(f"Failed to send Telegram file: {e}")
+
+def send_audio(file_path, caption=None, title=None):
+    """
+    Sends an audio file to the configured Telegram chat.
+    """
+    token = Config.TELEGRAM_BOT_TOKEN
+    chat_id = Config.TELEGRAM_CHAT_ID
+    if not token or not chat_id or not os.path.exists(file_path):
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendAudio"
+    try:
+        with open(file_path, "rb") as f:
+            files = {"audio": f}
+            payload = {
+                "chat_id": chat_id, 
+                "caption": caption,
+                "title": title
+            }
+            response = requests.post(url, data=payload, files=files)
+            response.raise_for_status()
+    except Exception as e:
+        print(f"Failed to send Telegram audio: {e}")
+
 def send_approval_request(video):
     """
-    Sends an approval request with a 'GO' button for a specific video.
+    Sends an approval request with Approve and Reject buttons for a specific video.
     """
     token = Config.TELEGRAM_BOT_TOKEN
     chat_id = Config.TELEGRAM_CHAT_ID
@@ -41,10 +85,11 @@ def send_approval_request(video):
     
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     
-    # Inline keyboard markup using raw dict for requests
+    # Dual button keyboard
     keyboard = {
         "inline_keyboard": [[
-            {"text": "🚀 GO", "callback_data": f"go|{video_id}|{title}"}
+            {"text": "✅ Approve", "callback_data": f"approve|{video_id}"},
+            {"text": "❌ Reject", "callback_data": f"reject|{video_id}"}
         ]]
     }
     
@@ -53,7 +98,7 @@ def send_approval_request(video):
         f"*Title:* {title}\n"
         f"*Views:* {video.get('views', 0):,}\n"
         f"*Link:* [YouTube](https://youtube.com/watch?v={video_id})\n\n"
-        f"Click the button below to start production."
+        f"Would you like to start production?"
     )
     
     payload = {
@@ -65,6 +110,8 @@ def send_approval_request(video):
     
     try:
         response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            print(f"Telegram API Error {response.status_code}: {response.text}")
         response.raise_for_status()
         print(f"Sent approval request for: {title}")
     except Exception as e:
@@ -75,27 +122,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Handles callback queries from inline buttons.
     """
     query = update.callback_query
-    await query.answer()
-    
     data = query.data
-    if data.startswith("go|"):
+    
+    import asyncio
+    
+    if data.startswith("approve|"):
+        # 1. Answer immediately to stop spinner
+        await query.answer(text="🚀 Production started!", show_alert=False)
+        
         parts = data.split("|")
-        if len(parts) >= 3:
+        if len(parts) >= 2:
             video_id = parts[1]
-            title = "|".join(parts[2:]) # Handle titles that might contain |
             
-            await query.edit_message_text(text=f"⏳ *Production Started:* {title}\n(Reframing and generating assets...)")
+            # 2. Update message to confirm approval
+            await query.edit_message_text(
+                text=f"✅ *Approved:* Starting Production for `{video_id}`..."
+            )
             
-            # Import here to avoid circular dependency
+            # 3. Offload blocking task to a thread
             from src.orchestrator import process_short_approval
-            # Run production
             try:
-                # We call it directly. For long running tasks in a real bot, 
-                # this would ideally be offloaded to a worker thread.
-                process_short_approval(video_id, title)
+                # Run in thread to keep bot responsive
+                await asyncio.to_thread(process_short_approval, video_id, f"Video_{video_id}")
             except Exception as e:
-                print(f"Error during production: {e}")
-                await query.edit_message_text(text=f"❌ *Error producing:* {title}\nCheck logs for details.")
+                import logging
+                logging.error(f"Error during production for {video_id}: {e}")
+                await query.edit_message_text(text=f"❌ *Production Error:* {str(e)}")
+                
+    elif data.startswith("reject|"):
+        # 1. Answer immediately
+        await query.answer(text="❌ Recommendation Discarded.", show_alert=False)
+        
+        # 2. Update message to confirm rejection
+        await query.edit_message_text(text="🗑️ *Recommendation Discarded.*")
 
 def start_bot(run=True):
     """
@@ -109,9 +168,10 @@ def start_bot(run=True):
         return None
 
     print("Initializing Telegram bot...")
-    application = Application.builder().token(token).build()
+    # Disable JobQueue if it's causing weakref issues in Python 3.13
+    application = Application.builder().token(token).job_queue(None).build()
     
-    # Add handler for the 'GO' button
+    # Add handler for button callbacks (Approve/Reject)
     application.add_handler(CallbackQueryHandler(handle_callback))
     
     if run:
