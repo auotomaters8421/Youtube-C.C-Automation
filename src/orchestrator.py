@@ -50,10 +50,43 @@ def process_short_approval(video_id, title):
         full_text = f"{v_data['hook']} {v_data['body']} {v_data['cta']}"
         audio_file = os.path.join(output_path, "audio_viral_version.mp3")
         print(f"Generating TTS for viral_version via Inworld...")
-        try:
-            generate_tts(full_text, audio_file)
-        except Exception as e:
-            print(f"TTS Error for viral_version: {e}")
+        
+        while True:
+            try:
+                from src.audio import generate_tts, InworldCreditError
+                generate_tts(full_text, audio_file)
+                break # Success!
+            except InworldCreditError as e:
+                from src.telegram_bot import send_message
+                alert_text = (
+                    f"⚠️ *Inworld Credits Exhausted!*\n\n"
+                    f"Production for *{title}* is paused.\n"
+                    f"Please update your API credentials using:\n"
+                    f"`/update_inworld_key <key>`\n"
+                    f"`/update_inworld_secret <secret>`\n"
+                    f"`/update_voice_id <id>`\n\n"
+                    f"The system will automatically resume once keys are updated."
+                )
+                send_message(alert_text)
+                print(f"Paused: Waiting for Inworld credentials update... {e}")
+                
+                # Capture current keys to detect change
+                old_key = Config.INWORLD_KEY
+                old_secret = Config.INWORLD_SECRET
+                old_voice = Config.INWORLD_VOICE_ID
+                
+                # Wait for any of them to change
+                while Config.INWORLD_KEY == old_key and \
+                      Config.INWORLD_SECRET == old_secret and \
+                      Config.INWORLD_VOICE_ID == old_voice:
+                    time.sleep(10) # Check every 10 seconds
+                
+                print("New credentials detected! Resuming production...")
+                send_message(f"🚀 New credentials detected. Resuming production for: {title}")
+                
+            except Exception as e:
+                print(f"TTS Error for viral_version: {e}")
+                break # Fatal error, stop trying
 
     # 5. Notify and send files
     from src.telegram_bot import send_message, send_file, send_audio

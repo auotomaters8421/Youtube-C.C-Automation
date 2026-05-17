@@ -12,7 +12,7 @@ def select_topic(videos):
     """
     Analyzes a list of YouTube videos and picks the most viral topic using Gemini.
     """
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"Analyze these YouTube videos and pick the most viral topic for an AI automation niche: {videos}"
     try:
         response = model.generate_content(prompt)
@@ -36,18 +36,34 @@ def rank_shorts(shorts_data):
     # Sort by velocity descending
     return sorted(shorts_data, key=lambda x: x['velocity'], reverse=True)
 
-def reframe_transcript(transcript):
+import json
+
+def reframe_transcript(transcript, content_type="auto"):
     """
-    Reframes a YouTube Short transcript using Gemini based on a system prompt.
+    Reframes a YouTube Short transcript using Gemini based on the detailed system prompt.
+    Returns a dictionary with viral_version and standard_version.
     """
     model = genai.GenerativeModel(
-        model_name='gemini-2.0-flash',
-        system_instruction=Config.GEMINI_SYSTEM_PROMPT
+        model_name='gemini-1.5-flash',
+        system_instruction=Config.get_gemini_system_prompt()
     )
     
+    input_block = f"TRANSCRIPT: {transcript}\nCONTENT_TYPE: {content_type}"
+    
     try:
-        response = model.generate_content(transcript)
-        return response.text
+        response = model.generate_content(
+            input_block,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json"
+            )
+        )
+        return json.loads(response.text)
     except Exception as e:
-        print(f"Gemini Reframing Error: {e}")
-        return transcript # Fallback to original transcript if reframing fails
+        import logging
+        logging.error(f"Gemini Reframing Error: {e}")
+        # Return a structured fallback
+        return {
+            "error": str(e),
+            "viral_version": {"hook": "", "body": transcript, "cta": ""},
+            "standard_version": {"hook": "", "body": transcript, "cta": ""}
+        }

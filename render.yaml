@@ -1,0 +1,18 @@
+services:
+  - type: worker
+    name: youtube-automation-worker
+    env: python
+    region: ohio # Default region, can be changed
+    plan: starter # Render starter plan supports background workers
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - fromGroup: youtube-automation-secrets
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: SEEN_VIDEOS_PATH
+        value: /data/seen_videos.json
+    disk:
+      name: seen-videos-storage
+      mountPath: /data
+      sizeGB: 1

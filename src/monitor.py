@@ -37,23 +37,52 @@ def fetch_video_metrics(video_id):
     """
     Fetches views for a given video ID using simple scraping.
     """
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    try:
-        response = requests.get(url, timeout=10)
-        # Regex to find views in meta tag
-        views_match = re.search(r'<meta itemprop="interactionCount" content="(\d+)">', response.text)
-        views = int(views_match.group(1)) if views_match else 0
-        
-        # Regex to find upload date
-        date_match = re.search(r'<meta itemprop="datePublished" content="([^"]+)">', response.text)
-        publish_date = date_match.group(1) if date_match else None
-        
-        return {
-            'views': views,
-            'publish_date': publish_date
-        }
-    except:
-        return {'views': 0, 'publish_date': None}
+    urls = [
+        f"https://www.youtube.com/shorts/{video_id}",
+        f"https://www.youtube.com/watch?v={video_id}"
+    ]
+    
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            # Strategy 1: itemprop meta tag
+            views_match = re.search(r'<meta itemprop="interactionCount" content="(\d+)">', response.text)
+            views = int(views_match.group(1)) if views_match else 0
+            
+            # Strategy 2: "viewCount":"..." in JSON blob
+            if views == 0:
+                json_match = re.search(r'\"viewCount\":\{\"simpleText\":\"([\d,]+)\"', response.text)
+                if json_match:
+                    views = int(json_match.group(1).replace(',', ''))
+                else:
+                    json_match = re.search(r'\"viewCount\":\"(\d+)\"', response.text)
+                    views = int(json_match.group(1)) if json_match else 0
+            
+            # Strategy 3: "label":"... views"
+            if views == 0:
+                label_match = re.search(r'\"label\":\"([\d,.]+)[^"]*views\"', response.text)
+                if label_match:
+                    val = label_match.group(1).replace(',', '')
+                    if 'K' in val: views = int(float(val.replace('K', '')) * 1000)
+                    elif 'M' in val: views = int(float(val.replace('M', '')) * 1000000)
+                    else: views = int(float(val))
+            
+            if views > 0:
+                # Regex to find upload date
+                date_match = re.search(r'<meta itemprop="datePublished" content="([^"]+)">', response.text)
+                publish_date = date_match.group(1) if date_match else None
+                
+                return {
+                    'views': views,
+                    'publish_date': publish_date
+                }
+        except:
+            continue
+            
+    return {'views': 0, 'publish_date': None}
 
 def fetch_transcript(video_id):
     """
@@ -61,8 +90,12 @@ def fetch_transcript(video_id):
     Returns the combined text string or None if it fails.
     """
     try:
-        # Instantiate the API and use 'fetch' for version 1.2.4+
-        transcript_list = YouTubeTranscriptApi().fetch(video_id)
-        return " ".join([segment['text'] for segment in transcript_list])
-    except:
+        # In version 1.2.4, we need to instantiate the API
+        api = YouTubeTranscriptApi()
+        transcript_list = api.fetch(video_id)
+        # Extract text from the list of snippets
+        return " ".join([snippet['text'] for snippet in transcript_list])
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to fetch transcript for {video_id}: {e}")
         return None

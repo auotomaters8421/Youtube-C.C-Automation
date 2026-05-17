@@ -22,7 +22,7 @@ def test_select_topic():
         result = select_topic(mock_videos)
         
         assert result == expected_topic
-        MockModel.assert_called_once_with('gemini-2.5-flash')
+        MockModel.assert_called_once_with('gemini-1.5-flash')
         mock_instance.generate_content.assert_called_once()
         # Verify the prompt contains video info
         args, kwargs = mock_instance.generate_content.call_args

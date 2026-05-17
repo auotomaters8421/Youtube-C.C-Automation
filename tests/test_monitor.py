@@ -30,19 +30,18 @@ def test_fetch_feed():
 
 def test_fetch_transcript_invalid():
     from src.monitor import fetch_transcript
-    # Known invalid ID or just a mock that fails
-    with patch('youtube_transcript_api.YouTubeTranscriptApi.fetch') as mock_fetch:
-        from youtube_transcript_api import TranscriptsDisabled
-        mock_fetch.side_effect = TranscriptsDisabled("video_id")
+    with patch('src.monitor.YouTubeTranscriptApi.fetch') as mock_fetch:
+        mock_fetch.side_effect = Exception("Failed")
         assert fetch_transcript("invalid_id") is None
 
 def test_fetch_transcript_success():
     from src.monitor import fetch_transcript
-    with patch('youtube_transcript_api.YouTubeTranscriptApi.fetch') as mock_fetch:
+    with patch('src.monitor.YouTubeTranscriptApi.fetch') as mock_fetch:
         mock_fetch.return_value = [
-            {'text': 'Hello', 'start': 0.0, 'duration': 1.0},
-            {'text': 'World', 'start': 1.0, 'duration': 1.0}
+            {'text': 'Hello'},
+            {'text': 'World'}
         ]
+        
         result = fetch_transcript("valid_id")
         assert result == "Hello World"
 

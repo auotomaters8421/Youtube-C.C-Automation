@@ -3,8 +3,35 @@ import time
 import os
 import asyncio
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 from src.config import Config
+
+async def update_inworld_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Updates the Inworld API Key at runtime."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/update_inworld_key <key>`", parse_mode="Markdown")
+        return
+    new_value = context.args[0]
+    Config.update_runtime_config("INWORLD_KEY", new_value)
+    await update.message.reply_text(f"✅ *Inworld Key* updated to: `{new_value[:5]}...`", parse_mode="Markdown")
+
+async def update_inworld_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Updates the Inworld API Secret at runtime."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/update_inworld_secret <secret>`", parse_mode="Markdown")
+        return
+    new_value = context.args[0]
+    Config.update_runtime_config("INWORLD_SECRET", new_value)
+    await update.message.reply_text(f"✅ *Inworld Secret* updated to: `{new_value[:5]}...`", parse_mode="Markdown")
+
+async def update_voice_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Updates the Inworld Voice ID at runtime."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/update_voice_id <id>`", parse_mode="Markdown")
+        return
+    new_value = context.args[0]
+    Config.update_runtime_config("INWORLD_VOICE_ID", new_value)
+    await update.message.reply_text(f"✅ *Voice ID* updated to: `{new_value}`", parse_mode="Markdown")
 
 def send_message(text):
     """
@@ -127,14 +154,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import asyncio
     
     if data.startswith("approve|"):
-        # 1. Answer immediately to stop spinner
-        await query.answer(text="🚀 Production started!", show_alert=False)
+        # 1. Answer immediately to stop spinner (Match spec: "🚀 Done! Production started.")
+        await query.answer(text="🚀 Done! Production started.", show_alert=False)
         
         parts = data.split("|")
         if len(parts) >= 2:
             video_id = parts[1]
             
-            # 2. Update message to confirm approval
+            # Extract actual title from the message to preserve it
+            import re
+            message_text = query.message.text
+            video_title = video_id # Fallback
+            title_match = re.search(r"Title:\s*(.*)", message_text)
+            if title_match:
+                video_title = title_match.group(1).strip()
+
+            # 2. Update message to confirm approval (Match spec)
             await query.edit_message_text(
                 text=f"✅ *Approved:* Starting Production for `{video_id}`..."
             )
@@ -142,8 +177,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 3. Offload blocking task to a thread
             from src.orchestrator import process_short_approval
             try:
-                # Run in thread to keep bot responsive
-                await asyncio.to_thread(process_short_approval, video_id, f"Video_{video_id}")
+                # Run in thread to keep bot responsive with actual title
+                await asyncio.to_thread(process_short_approval, video_id, video_title)
             except Exception as e:
                 import logging
                 logging.error(f"Error during production for {video_id}: {e}")
@@ -173,6 +208,11 @@ def start_bot(run=True):
     
     # Add handler for button callbacks (Approve/Reject)
     application.add_handler(CallbackQueryHandler(handle_callback))
+    
+    # Add handlers for runtime config updates
+    application.add_handler(CommandHandler("update_inworld_key", update_inworld_key))
+    application.add_handler(CommandHandler("update_inworld_secret", update_inworld_secret))
+    application.add_handler(CommandHandler("update_voice_id", update_voice_id))
     
     if run:
         print("Bot is running. Waiting for user approval...")

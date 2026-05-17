@@ -10,13 +10,37 @@ class Config:
     INWORLD_SECRET: Optional[str] = os.getenv("INWORLD_SECRET")
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")
-    CHANNELS: List[str] = os.getenv("YOUTUBE_CHANNELS", "").split(",") if os.getenv("YOUTUBE_CHANNELS") else []
+    CHANNELS: List[str] = os.getenv("CHANNELS", "").split(",") if os.getenv("CHANNELS") else []
     OUTPUT_DIR: str = "output"
 
     # Shorts Reframer Config
-    INWORLD_VOICE_ID: str = os.getenv("INWORLD_VOICE_ID", "default-d010pwu587xlzwrg_tencw__my_voice")
+    INWORLD_VOICE_ID: str = os.getenv("INWORLD_VOICE_ID", "default-d010pwu587xlzwrg_tencw__coyied_voice")
     INWORLD_FALLBACK_VOICE: str = os.getenv("INWORLD_FALLBACK_VOICE", "Alex")
-    GEMINI_SYSTEM_PROMPT: str = os.getenv("GEMINI_SYSTEM_PROMPT", "Reframe the following YouTube Short transcript into a controversial, problem-solving script. Focus on a heavy hook in the first 3 seconds.")
+    
+    # Persistence Config
+    SEEN_VIDEOS_PATH: str = os.getenv("SEEN_VIDEOS_PATH", os.path.join("data", "seen_videos.json"))
+    
+    @classmethod
+    def update_runtime_config(cls, key: str, value: str):
+        """Updates configuration at runtime."""
+        if hasattr(cls, key):
+            setattr(cls, key, value)
+            import logging
+            logging.info(f"Runtime config updated: {key} is now set.")
+            return True
+        return False
+
+    @classmethod
+    def get_gemini_system_prompt(cls) -> str:
+        """Loads the Gemini system prompt from the specs directory."""
+        prompt_path = os.path.join("docs", "superpowers", "specs", "Systemprompt.md")
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            import logging
+            logging.error(f"System prompt file not found at {prompt_path}")
+            return "Reframe the following YouTube Short transcript into a viral and standard version."
 
     @classmethod
     def validate(cls):

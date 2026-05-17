@@ -4,8 +4,6 @@ import datetime
 from src.config import Config
 from src.monitor import fetch_feed
 
-SEEN_VIDEOS_FILE = os.path.join("data", "seen_videos.json")
-
 def check_for_new_videos(seen_file_path=None, min_date=None):
     """
     Checks for new Shorts in the configured channels.
@@ -14,7 +12,7 @@ def check_for_new_videos(seen_file_path=None, min_date=None):
     2. Not present in the seen_videos.json file.
     """
     if seen_file_path is None:
-        seen_file_path = SEEN_VIDEOS_FILE
+        seen_file_path = Config.SEEN_VIDEOS_PATH
         
     if min_date is None:
         # Default to May 10, 2026
@@ -39,7 +37,14 @@ def check_for_new_videos(seen_file_path=None, min_date=None):
         for entry in entries:
             # entry.published is usually a time tuple or a datetime object depending on feedparser
             # We convert it to a timezone-aware datetime for comparison
-            pub_date = datetime.datetime(*entry.published_parsed[:6], tzinfo=datetime.timezone.utc)
+            try:
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime.datetime(*entry.published_parsed[:6], tzinfo=datetime.timezone.utc)
+                else:
+                    # Fallback to current time if date is missing
+                    pub_date = datetime.datetime.now(datetime.timezone.utc)
+            except:
+                pub_date = datetime.datetime.now(datetime.timezone.utc)
             
             if pub_date >= min_date and entry.id not in seen_videos:
                 new_videos_list.append({
