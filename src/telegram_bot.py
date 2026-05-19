@@ -33,6 +33,15 @@ async def update_voice_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Config.update_runtime_config("INWORLD_VOICE_ID", new_value)
     await update.message.reply_text(f"✅ *Voice ID* updated to: `{new_value}`", parse_mode="Markdown")
 
+async def update_deepgram_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Updates the Deepgram API Key at runtime."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/update_deepgram_key <key>`", parse_mode="Markdown")
+        return
+    new_key = context.args[0]
+    Config.update_runtime_config("DEEPGRAM_KEY", new_key)
+    await update.message.reply_text("✅ *Deepgram API Key* updated for this session.", parse_mode="Markdown")
+
 def send_message(text):
     """
     Sends a simple text message to the configured Telegram chat.
@@ -213,6 +222,7 @@ def start_bot(run=True):
     application.add_handler(CommandHandler("update_inworld_key", update_inworld_key))
     application.add_handler(CommandHandler("update_inworld_secret", update_inworld_secret))
     application.add_handler(CommandHandler("update_voice_id", update_voice_id))
+    application.add_handler(CommandHandler("update_deepgram_key", update_deepgram_key))
     
     if run:
         print("Bot is running. Waiting for user approval...")
