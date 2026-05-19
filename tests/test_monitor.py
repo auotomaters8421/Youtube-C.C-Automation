@@ -34,6 +34,29 @@ def test_fetch_transcript_invalid():
         mock_fetch.side_effect = Exception("Failed")
         assert fetch_transcript("invalid_id") is None
 
+def test_fetch_transcript_fallback_success():
+    from src.monitor import fetch_transcript
+    with patch('src.monitor.YouTubeTranscriptApi.fetch') as mock_fetch, \
+         patch('src.monitor.download_audio') as mock_download, \
+         patch('src.monitor.transcribe_audio_deepgram') as mock_transcribe, \
+         patch('os.remove') as mock_remove, \
+         patch('os.path.exists') as mock_exists:
+        
+        # Phase 1 fails
+        mock_fetch.side_effect = Exception("Phase 1 Failed")
+        
+        # Phase 2 succeeds
+        mock_download.return_value = "/tmp/temp_audio_fallback.m4a"
+        mock_transcribe.return_value = "Fallback Transcript"
+        mock_exists.return_value = True
+        
+        result = fetch_transcript("fallback_id")
+        
+        assert result == "Fallback Transcript"
+        mock_download.assert_called_once()
+        mock_transcribe.assert_called_once_with("/tmp/temp_audio_fallback.m4a")
+        mock_remove.assert_called_once_with("/tmp/temp_audio_fallback.m4a")
+
 def test_fetch_transcript_success():
     from src.monitor import fetch_transcript
     with patch('src.monitor.YouTubeTranscriptApi.fetch') as mock_fetch:
@@ -58,16 +81,30 @@ def test_fetch_video_metrics():
         assert metrics['views'] == 12345
         assert metrics['publish_date'] == "2023-10-27"
 
-def test_download_audio():
+def test_download_audio_success():
     from src.monitor import download_audio
-    with patch('yt_dlp.YoutubeDL') as mock_ydl:
+    with patch('yt_dlp.YoutubeDL') as mock_ydl, \
+         patch('os.path.exists') as mock_exists:
         mock_instance = MagicMock()
         mock_ydl.return_value.__enter__.return_value = mock_instance
+        mock_exists.return_value = True
         
         result = download_audio("video123", "output_path")
         
         mock_instance.download.assert_called_once_with(["https://www.youtube.com/watch?v=video123"])
         assert result == "output_path.m4a"
+
+def test_download_audio_failure():
+    from src.monitor import download_audio
+    import yt_dlp
+    with patch('yt_dlp.YoutubeDL') as mock_ydl:
+        mock_instance = MagicMock()
+        mock_ydl.return_value.__enter__.return_value = mock_instance
+        # Simulate DownloadError
+        mock_instance.download.side_effect = Exception("Download failed")
+        
+        result = download_audio("video123", "output_path")
+        assert result is None
 
 def test_transcribe_audio_deepgram_success():
     from src.monitor import transcribe_audio_deepgram
@@ -93,14 +130,38 @@ def test_transcribe_audio_deepgram_success():
             result = transcribe_audio_deepgram("dummy_path")
             assert result == "Deepgram Transcript"
 
+def test_transcribe_audio_deepgram_invalid_response():
+    from src.monitor import transcribe_audio_deepgram
+    from src.config import Config
+    Config.DEEPGRAM_KEY = "test_key"
+    
+    # Mock the entire deepgram module and its sub-attributes
+    with patch.dict('sys.modules', {'deepgram': MagicMock()}):
+        import deepgram
+        mock_client = deepgram.DeepgramClient
+        mock_deepgram = MagicMock()
+        mock_client.return_value = mock_deepgram
+        
+        # Mocking an empty response structure
+        mock_response = MagicMock()
+        mock_response.results.channels = [] # Empty channels
+        mock_deepgram.listen.prerecorded.v.return_value.transcribe_file.return_value = mock_response
+        
+        # Mock built-in open
+        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))):
+            result = transcribe_audio_deepgram("dummy_path")
+            assert result is None
+
 def test_transcribe_audio_deepgram_no_key():
     from src.monitor import transcribe_audio_deepgram
     from src.config import Config
     original_key = Config.DEEPGRAM_KEY
     Config.DEEPGRAM_KEY = None
     try:
-        # Should return None before even trying to import deepgram
-        result = transcribe_audio_deepgram("dummy_path")
-        assert result is None
+        # Mocking sys.modules['deepgram'] to avoid import error even if it reaches that line
+        with patch.dict('sys.modules', {'deepgram': MagicMock()}):
+            # Should return None before even trying to import deepgram
+            result = transcribe_audio_deepgram("dummy_path")
+            assert result is None
     finally:
         Config.DEEPGRAM_KEY = original_key

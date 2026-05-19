@@ -89,21 +89,39 @@ def fetch_video_metrics(video_id):
 def fetch_transcript(video_id):
     """
     Fetches the transcript for a given video ID.
-    Returns the combined text string or None if it fails.
+    Uses Phase 1 (Free YouTube Transcript API) first, falls back to
+    Phase 2 (Deepgram transcription) if Phase 1 fails.
     """
+    import logging
+    # Try Phase 1: Free API
     try:
-        # In version 1.2.4, we need to instantiate the API
         api = YouTubeTranscriptApi()
         transcript_list = api.fetch(video_id)
-        # Extract text from the list of snippets
         return " ".join([snippet['text'] for snippet in transcript_list])
     except Exception as e:
-        import logging
-        logging.error(f"Failed to fetch transcript for {video_id}: {e}")
+        logging.info(f"Phase 1 transcript fetch failed for {video_id}: {e}. Trying Phase 2 (Deepgram)...")
+
+    # Try Phase 2: Deepgram Fallback
+    audio_base = os.path.join("/tmp", f"temp_audio_{video_id}")
+    # Use "/tmp" as it is standard for temporary files and works on Render
+    audio_path = None
+    try:
+        audio_path = download_audio(video_id, audio_base)
+        if audio_path:
+            transcript = transcribe_audio_deepgram(audio_path)
+            return transcript
         return None
+    except Exception as fallback_err:
+        logging.error(f"Phase 2 transcript fetch failed for {video_id}: {fallback_err}")
+        return None
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            os.remove(audio_path)
 
 def download_audio(video_id, output_path):
     import yt_dlp
+    import logging
+    import os
     ydl_opts = {
         'format': 'm4a/bestaudio/best',
         'postprocessors': [{
@@ -114,9 +132,24 @@ def download_audio(video_id, output_path):
         'quiet': True,
         'no_warnings': True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-    return f"{output_path}.m4a"
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+        
+        # Robust path checking: yt-dlp with the above options usually 
+        # produces output_path.m4a
+        potential_path = f"{output_path}.m4a"
+        if os.path.exists(potential_path):
+            return potential_path
+        
+        if os.path.exists(output_path):
+            return output_path
+            
+        logging.error(f"Download succeeded but file not found at {potential_path}")
+        return None
+    except Exception as e:
+        logging.error(f"Failed to download audio for {video_id}: {e}")
+        return None
 
 def transcribe_audio_deepgram(audio_path):
     if not Config.DEEPGRAM_KEY:
@@ -139,7 +172,20 @@ def transcribe_audio_deepgram(audio_path):
         )
         
         response = deepgram.listen.prerecorded.v("1").transcribe_file(payload, options)
-        return response.results.channels[0].alternatives[0].transcript
+        
+        # Safely check response structure
+        if not response or not hasattr(response, 'results'):
+            return None
+            
+        results = response.results
+        if not hasattr(results, 'channels') or not results.channels:
+            return None
+            
+        channel = results.channels[0]
+        if not hasattr(channel, 'alternatives') or not channel.alternatives:
+            return None
+            
+        return channel.alternatives[0].transcript
     except Exception as e:
         import logging
         logging.error(f"Deepgram Error: {e}")
