@@ -4,51 +4,50 @@ import os
 import requests
 
 def test_generate_tts_success(monkeypatch):
-    # Mocking environment variables for Config
-    monkeypatch.setenv("INWORLD_KEY", "test_key")
-    monkeypatch.setenv("INWORLD_SECRET", "test_secret")
-    
-    # We need to reload src.config if it's already imported, 
-    # but since this is a new test run, it should be fine if we import it inside.
-    import src.config
-    import src.audio
-    import importlib
-    importlib.reload(src.config)
-    importlib.reload(src.audio)
-    
+    from src.config import Config
     from src.audio import generate_tts
     import base64
+    
+    # Set attributes directly on Config for the test
+    original_key = Config.INWORLD_KEY
+    original_secret = Config.INWORLD_SECRET
+    Config.INWORLD_KEY = "test_key"
+    Config.INWORLD_SECRET = "test_secret"
     
     fake_audio_b64 = base64.b64encode(b"fake audio content").decode("utf-8")
     mock_response = MagicMock()
     mock_response.json.return_value = {"audioContent": fake_audio_b64}
     mock_response.status_code = 200
     
-    with patch("requests.post", return_value=mock_response) as mock_post:
-        filename = "test_audio.mp3"
-        result = generate_tts("Hello world", filename)
-        
-        assert result == filename
-        assert os.path.exists(filename)
-        
-        # Verify mock_post was called with expected arguments
-        args, kwargs = mock_post.call_args
-        assert args[0] == "https://api.inworld.ai/tts/v1/voice"
-        
-        expected_payload = {
-            "text": "Hello world",
-            "voiceId": "default-d010pwu587xlzwrg_tencw__my_voice",
-            "modelId": "inworld-tts-1.5-max",
-            "audioConfig": {
-                "audioEncoding": "MP3"
+    try:
+        with patch("requests.post", return_value=mock_response) as mock_post:
+            filename = "test_audio.mp3"
+            result = generate_tts("Hello world", filename)
+            
+            assert result == filename
+            assert os.path.exists(filename)
+            
+            # Verify mock_post was called with expected arguments
+            args, kwargs = mock_post.call_args
+            assert args[0] == "https://api.inworld.ai/tts/v1/voice"
+            
+            expected_payload = {
+                "text": "Hello world",
+                "voiceId": Config.INWORLD_VOICE_ID,
+                "modelId": "inworld-tts-1.5-max",
+                "audioConfig": {
+                    "audioEncoding": "MP3"
+                }
             }
-        }
-        assert kwargs["json"] == expected_payload
-        assert "Authorization" in kwargs["headers"]
-        
-        # Clean up
-        if os.path.exists(filename):
-            os.remove(filename)
+            assert kwargs["json"] == expected_payload
+            assert "Authorization" in kwargs["headers"]
+            
+            # Clean up
+            if os.path.exists(filename):
+                os.remove(filename)
+    finally:
+        Config.INWORLD_KEY = original_key
+        Config.INWORLD_SECRET = original_secret
 
 def test_generate_tts_fallback(monkeypatch):
     monkeypatch.setenv("INWORLD_VOICE_ID", "custom_voice")
