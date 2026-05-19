@@ -1,7 +1,15 @@
 import feedparser
 import requests
 import re
+import os
+import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
+from deepgram import (
+    DeepgramClient,
+    PrerecordedOptions,
+    FileSource,
+)
+from src.config import Config
 
 def is_short(video_id):
     """
@@ -98,4 +106,41 @@ def fetch_transcript(video_id):
     except Exception as e:
         import logging
         logging.error(f"Failed to fetch transcript for {video_id}: {e}")
+        return None
+
+def download_audio(video_id, output_path):
+    ydl_opts = {
+        'format': 'm4a/bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'm4a',
+        }],
+        'outtmpl': output_path,
+        'quiet': True,
+        'no_warnings': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+    return f"{output_path}.m4a"
+
+def transcribe_audio_deepgram(audio_path):
+    if not Config.DEEPGRAM_KEY:
+        return None
+    
+    try:
+        deepgram = DeepgramClient(Config.DEEPGRAM_KEY)
+        with open(audio_path, "rb") as file:
+            buffer_data = file.read()
+        
+        payload: FileSource = {"buffer": buffer_data}
+        options = PrerecordedOptions(
+            model="nova-2",
+            smart_format=True,
+        )
+        
+        response = deepgram.listen.prerecorded.v("1").transcribe_file(payload, options)
+        return response.results.channels[0].alternatives[0].transcript
+    except Exception as e:
+        import logging
+        logging.error(f"Deepgram Error: {e}")
         return None
