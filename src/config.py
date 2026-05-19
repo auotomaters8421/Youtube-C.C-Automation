@@ -10,6 +10,7 @@ class Config:
     INWORLD_SECRET: Optional[str] = os.getenv("INWORLD_SECRET")
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")
+    DEEPGRAM_KEY: Optional[str] = os.getenv("DEEPGRAM_KEY")
     CHANNELS: List[str] = os.getenv("CHANNELS", "").split(",") if os.getenv("CHANNELS") else []
     OUTPUT_DIR: str = "output"
 
@@ -18,6 +19,7 @@ class Config:
     INWORLD_FALLBACK_VOICE: str = os.getenv("INWORLD_FALLBACK_VOICE", "Alex")
     
     # Persistence Config
+    MONGO_URI: Optional[str] = os.getenv("MONGO_URI")
     SEEN_VIDEOS_PATH: str = os.getenv("SEEN_VIDEOS_PATH", os.path.join("data", "seen_videos.json"))
     
     @classmethod
@@ -52,7 +54,8 @@ class Config:
             "INWORLD_KEY",
             "INWORLD_SECRET",
             "TELEGRAM_BOT_TOKEN",
-            "TELEGRAM_CHAT_ID"
+            "TELEGRAM_CHAT_ID",
+            "DEEPGRAM_KEY"
         ]
         missing = [key for key in mandatory_keys if not getattr(cls, key)]
         if missing:
