@@ -2,13 +2,7 @@ import feedparser
 import requests
 import re
 import os
-import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
-from deepgram import (
-    DeepgramClient,
-    PrerecordedOptions,
-    FileSource,
-)
 from src.config import Config
 
 def is_short(video_id):
@@ -109,6 +103,7 @@ def fetch_transcript(video_id):
         return None
 
 def download_audio(video_id, output_path):
+    import yt_dlp
     ydl_opts = {
         'format': 'm4a/bestaudio/best',
         'postprocessors': [{
@@ -127,6 +122,11 @@ def transcribe_audio_deepgram(audio_path):
     if not Config.DEEPGRAM_KEY:
         return None
     
+    from deepgram import (
+        DeepgramClient,
+        PrerecordedOptions,
+        FileSource,
+    )
     try:
         deepgram = DeepgramClient(Config.DEEPGRAM_KEY)
         with open(audio_path, "rb") as file:

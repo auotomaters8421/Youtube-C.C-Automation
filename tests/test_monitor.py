@@ -57,3 +57,50 @@ def test_fetch_video_metrics():
         metrics = fetch_video_metrics("some_id")
         assert metrics['views'] == 12345
         assert metrics['publish_date'] == "2023-10-27"
+
+def test_download_audio():
+    from src.monitor import download_audio
+    with patch('yt_dlp.YoutubeDL') as mock_ydl:
+        mock_instance = MagicMock()
+        mock_ydl.return_value.__enter__.return_value = mock_instance
+        
+        result = download_audio("video123", "output_path")
+        
+        mock_instance.download.assert_called_once_with(["https://www.youtube.com/watch?v=video123"])
+        assert result == "output_path.m4a"
+
+def test_transcribe_audio_deepgram_success():
+    from src.monitor import transcribe_audio_deepgram
+    from src.config import Config
+    Config.DEEPGRAM_KEY = "test_key"
+    
+    # Mock the entire deepgram module and its sub-attributes
+    with patch.dict('sys.modules', {'deepgram': MagicMock()}):
+        import deepgram
+        mock_client = deepgram.DeepgramClient
+        mock_deepgram = MagicMock()
+        mock_client.return_value = mock_deepgram
+        
+        # Mocking the deepgram response structure
+        mock_response = MagicMock()
+        mock_response.results.channels = [
+            MagicMock(alternatives=[MagicMock(transcript="Deepgram Transcript")])
+        ]
+        mock_deepgram.listen.prerecorded.v.return_value.transcribe_file.return_value = mock_response
+        
+        # Mock built-in open
+        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))):
+            result = transcribe_audio_deepgram("dummy_path")
+            assert result == "Deepgram Transcript"
+
+def test_transcribe_audio_deepgram_no_key():
+    from src.monitor import transcribe_audio_deepgram
+    from src.config import Config
+    original_key = Config.DEEPGRAM_KEY
+    Config.DEEPGRAM_KEY = None
+    try:
+        # Should return None before even trying to import deepgram
+        result = transcribe_audio_deepgram("dummy_path")
+        assert result is None
+    finally:
+        Config.DEEPGRAM_KEY = original_key

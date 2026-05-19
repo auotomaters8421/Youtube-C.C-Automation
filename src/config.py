@@ -1,4 +1,5 @@
 import os
+import logging
 from dotenv import load_dotenv
 from typing import List, Optional
 
@@ -27,7 +28,6 @@ class Config:
         """Updates configuration at runtime."""
         if hasattr(cls, key):
             setattr(cls, key, value)
-            import logging
             logging.info(f"Runtime config updated: {key} is now set.")
             return True
         return False
@@ -40,7 +40,6 @@ class Config:
             with open(prompt_path, "r", encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
-            import logging
             logging.error(f"System prompt file not found at {prompt_path}")
             return "Reframe the following YouTube Short transcript into a viral and standard version."
 
@@ -59,5 +58,4 @@ class Config:
         ]
         missing = [key for key in mandatory_keys if not getattr(cls, key)]
         if missing:
-            import logging
             logging.warning(f"Missing mandatory configuration keys: {', '.join(missing)}")
