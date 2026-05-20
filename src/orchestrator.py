@@ -35,7 +35,7 @@ def process_short_approval(video_id, title):
     # 3. Create directory structure
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     safe_title = "".join([c if c.isalnum() else "_" for c in title])[:50]
-    output_path = os.path.join(Config.OUTPUT_DIR, f"{date_str}_{safe_title}")
+    output_path = os.path.join(Config.OUTPUT_DIR, f"{date_str}_{safe_title}_{video_id}")
 
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -47,7 +47,8 @@ def process_short_approval(video_id, title):
     # 4. Generate audio ONLY for viral version
     v_data = reframed_data.get("viral_version")
     if v_data:
-        full_text = f"{v_data['hook']} {v_data['body']} {v_data['cta']}"
+        outro = "AI is moving fast – your need to move even fast"
+        full_text = f"{v_data['hook']} {v_data['body']} {v_data['cta']} {outro}"
         audio_file = os.path.join(output_path, "audio_viral_version.mp3")
         print(f"Generating TTS for viral_version via Inworld...")
         

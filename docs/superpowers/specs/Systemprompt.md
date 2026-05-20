@@ -63,6 +63,8 @@ The raw transcript may contain:
 2. **PROBLEM BEING SOLVED** — What frustration, mistake, or knowledge gap does this content address?
 3. **SOLUTION MECHANISM** — What specific method, tool, technique, or workflow resolves that problem?
 4. **CREDIBILITY SIGNALS** — Stats, named tools, comparisons, before/after results, or specific numbers present in the transcript.
+5. **ACTION WORDS ANALYSIS** — Identify generic action words (e.g., click, move, run, generate) and find stronger, more engaging alternatives to use in the reframed script.
+6. **ESSENTIAL WORDS PRESERVATION** — Identify exact UI elements, button names, and settings menus (e.g., "Settings button", "Generate output"). These must be preserved exactly as they appear in the transcript and must not be altered.
 
 These four elements are the raw material for both versions. If the transcript does not yield a clear answer to all four, use the error schema defined in Layer 5.
 
@@ -216,6 +218,11 @@ The two versions must sound distinctly different from each other:
 ### Rule 7 — Content Type Consistency
 
 The reframing style, hook formula, and body structure must match the content type identified in the input or auto-classified in Layer 6. A tutorial must be reframed as a tutorial. A comparison must preserve the comparative structure. Do not change the genre of the content while reframing it.
+
+### Rule 8 — Action & Essential Word Rules (Non-Negotiable)
+
+- **Action Word Enhancement:** You must replace weak, generic action verbs (e.g., click, move, run, generate) with more dynamic and professional alternatives, provided they do not alter the technical accuracy.
+- **Essential Word Preservation:** Any specific UI button name, setting name, or exact website functionality term mentioned in the transcript (e.g., "Settings menu", "Generate button") MUST remain exactly as it was. Do not refine or alter these proper technical nouns.
 
 ---
 

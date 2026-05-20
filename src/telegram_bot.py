@@ -42,6 +42,67 @@ async def update_deepgram_key(update: Update, context: ContextTypes.DEFAULT_TYPE
     Config.update_runtime_config("DEEPGRAM_KEY", new_key)
     await update.message.reply_text("✅ *Deepgram API Key* updated for this session.", parse_mode="Markdown")
 
+async def find_visuals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Finds visual sources based on video script."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/find_visuals <video_id>`", parse_mode="Markdown")
+        return
+    
+    video_id = context.args[0]
+    await update.message.reply_text(f"🔍 Searching visual sources for {video_id}...")
+    
+    # 1. Locate the folder
+    output_dir = Config.OUTPUT_DIR
+    target_folder = None
+    if os.path.exists(output_dir):
+        for folder in os.listdir(output_dir):
+            if folder.endswith(f"_{video_id}"):
+                target_folder = os.path.join(output_dir, folder)
+                break
+                
+    if not target_folder:
+        await update.message.reply_text(f"❌ Error: Could not find output folder for {video_id}")
+        return
+        
+    scripts_file = os.path.join(target_folder, "scripts.json")
+    if not os.path.exists(scripts_file):
+        await update.message.reply_text(f"❌ Error: scripts.json not found in {target_folder}")
+        return
+        
+    import json
+    import google.generativeai as genai
+    try:
+        with open(scripts_file, "r", encoding="utf-8") as f:
+            scripts_data = json.load(f)
+            
+        script_text = scripts_data.get("standard_version", {}).get("body", "")
+        if not script_text:
+            script_text = str(scripts_data)
+            
+        # 2. Extract search query using Gemini
+        genai.configure(api_key=Config.GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"Analyze the following script and extract the most relevant search query (just 2-5 words) to find the official blog post, official website, or visual sources for the AI tool or topic mentioned. Return ONLY the search query string, nothing else. Script: {script_text}"
+        
+        response = model.generate_content(prompt)
+        query = response.text.strip()
+        
+        # 3. Search DuckDuckGo
+        from duckduckgo_search import DDGS
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=3):
+                results.append(f"[{r['title']}]({r['href']})")
+                
+        if results:
+            reply_text = f"✅ *Visual Sources Found for '{query}':*\n\n" + "\n".join(results)
+            await update.message.reply_text(reply_text, parse_mode="Markdown", disable_web_page_preview=True)
+        else:
+            await update.message.reply_text(f"❌ No sources found for query: `{query}`", parse_mode="Markdown")
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error during search: {e}")
+
 def send_message(text):
     """
     Sends a simple text message to the configured Telegram chat.
@@ -223,6 +284,7 @@ def start_bot(run=True):
     application.add_handler(CommandHandler("update_inworld_secret", update_inworld_secret))
     application.add_handler(CommandHandler("update_voice_id", update_voice_id))
     application.add_handler(CommandHandler("update_deepgram_key", update_deepgram_key))
+    application.add_handler(CommandHandler("find_visuals", find_visuals))
     
     if run:
         print("Bot is running. Waiting for user approval...")
