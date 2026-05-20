@@ -2,9 +2,57 @@ import requests
 import time
 import os
 import asyncio
+import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 from src.config import Config
+
+def extract_video_id(url: str) -> str:
+    """
+    Extracts the 11-character video ID from any YouTube URL.
+    """
+    patterns = [
+        r"(?:v=|\/shorts\/|\/embed\/|\/v\/|youtu\.be\/)([a-zA-Z0-9_-]{11})"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    cleaned = url.strip()
+    if len(cleaned) == 11 and re.match(r"^[a-zA-Z0-9_-]{11}$", cleaned):
+        return cleaned
+    return None
+
+def fetch_video_title(video_id: str) -> str:
+    """
+    Fetches the video title via scraping.
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        # Try og:title
+        m = re.search(r'<meta property="og:title" content="([^"]+)">', r.text)
+        if m:
+            title = m.group(1)
+            if title.endswith(" - YouTube"):
+                title = title[:-10]
+            return title
+        # Try name="title"
+        m = re.search(r'<meta name="title" content="([^"]+)">', r.text)
+        if m:
+            return m.group(1)
+        # Try title tag
+        m = re.search(r'<title>(.*?)</title>', r.text)
+        if m:
+            title = m.group(1)
+            if title.endswith(" - YouTube"):
+                title = title[:-10]
+            return title
+    except Exception as e:
+        print(f"Error fetching title for {video_id}: {e}")
+    return f"YouTube Video {video_id}"
+
 
 async def update_inworld_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Updates the Inworld API Key at runtime."""
@@ -102,6 +150,58 @@ async def find_visuals(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         await update.message.reply_text(f"❌ Error during search: {e}")
+
+async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Adds a new channel ID to search feeds for."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/add_channel <channel_id>`", parse_mode="Markdown")
+        return
+    channel_id = context.args[0].strip()
+    if Config.add_channel(channel_id):
+        await update.message.reply_text(f"✅ Channel `{channel_id}` has been successfully added and saved.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"ℹ️ Channel `{channel_id}` is already in the list.", parse_mode="Markdown")
+
+async def process_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manually processes a YouTube URL, with optional visual sources search."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/process_url <youtube_url> [yes/no]`", parse_mode="Markdown")
+        return
+    
+    url = context.args[0].strip()
+    include_sources = False
+    
+    # Parse optional argument [yes/no]
+    if len(context.args) > 1:
+        sources_arg = context.args[1].lower().strip()
+        if sources_arg in ["yes", "sources", "true", "y"]:
+            include_sources = True
+            
+    video_id = extract_video_id(url)
+    if not video_id:
+        await update.message.reply_text("❌ Invalid YouTube URL or video ID. Please ensure it contains a valid 11-character video ID.")
+        return
+        
+    await update.message.reply_text(f"📥 Fetching details for video ID `{video_id}`...")
+    
+    def run_production():
+        try:
+            # Fetch title
+            title = fetch_video_title(video_id)
+            # Notify
+            send_message(f"🚀 Started manual production for: {title} (ID: {video_id}, include_sources={include_sources})")
+            # Run orchestrator process_short_approval
+            from src.orchestrator import process_short_approval
+            process_short_approval(video_id, title, include_sources=include_sources)
+        except Exception as e:
+            import logging
+            logging.error(f"Error in manual production for {video_id}: {e}")
+            send_message(f"❌ Error in manual production for {video_id}: {e}")
+        
+    # Start execution in thread
+    import threading
+    thread = threading.Thread(target=run_production)
+    thread.start()
 
 def send_message(text):
     """
@@ -285,6 +385,8 @@ def start_bot(run=True):
     application.add_handler(CommandHandler("update_voice_id", update_voice_id))
     application.add_handler(CommandHandler("update_deepgram_key", update_deepgram_key))
     application.add_handler(CommandHandler("find_visuals", find_visuals))
+    application.add_handler(CommandHandler("add_channel", add_channel))
+    application.add_handler(CommandHandler("process_url", process_url))
     
     if run:
         print("Bot is running. Waiting for user approval...")

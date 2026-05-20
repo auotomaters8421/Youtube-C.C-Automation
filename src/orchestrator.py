@@ -9,11 +9,11 @@ from src.audio import generate_tts
 from src.telegram_bot import send_approval_request
 from src.watcher import check_for_new_videos
 
-def process_short_approval(video_id, title):
+def process_short_approval(video_id, title, include_sources=False):
     """
     Handles the approval-based production flow for a specific video ID.
     """
-    print(f"Starting production for video: {video_id}")
+    print(f"Starting production for video: {video_id} (include_sources={include_sources})")
     
     # 1. Fetch transcript
     transcript = fetch_transcript(video_id)
@@ -89,9 +89,43 @@ def process_short_approval(video_id, title):
                 print(f"TTS Error for viral_version: {e}")
                 break # Fatal error, stop trying
 
-    # 5. Notify and send files
+    # 5. Optionally fetch visual sources using DuckDuckGo search and Gemini
+    sources_text = ""
+    if include_sources:
+        try:
+            print("Fetching visual sources for successful production notification...")
+            # Extract script text to derive query
+            script_text = ""
+            if v_data:
+                script_text = f"{v_data.get('hook', '')} {v_data.get('body', '')}"
+            if not script_text:
+                script_text = reframed_data.get("standard_version", {}).get("body", "")
+            if not script_text:
+                script_text = str(reframed_data)
+
+            import google.generativeai as genai
+            genai.configure(api_key=Config.GEMINI_API_KEY)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"Analyze the following script and extract the most relevant search query (just 2-5 words) to find the official blog post, official website, or visual sources for the AI tool or topic mentioned. Return ONLY the search query string, nothing else. Script: {script_text}"
+            response = model.generate_content(prompt)
+            query = response.text.strip()
+            
+            from duckduckgo_search import DDGS
+            results = []
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=3):
+                    results.append(f"[{r['title']}]({r['href']})")
+            if results:
+                sources_text = f"\n\n🔗 *Visual Sources found for query '{query}':*\n" + "\n".join(results)
+            else:
+                sources_text = f"\n\n🔗 No visual sources found for query: `{query}`"
+        except Exception as e:
+            print(f"Error fetching visual sources: {e}")
+            sources_text = f"\n\n⚠️ Failed to fetch visual sources: {e}"
+
+    # 6. Notify and send files
     from src.telegram_bot import send_message, send_file, send_audio
-    send_message(f"✅ Production completed for: {title}\nViral MP3 and Scripts generated.")
+    send_message(f"✅ Production completed for: {title}\nViral MP3 and Scripts generated.{sources_text}")
     
     scripts_file = os.path.join(output_path, "scripts.json")
     send_file(scripts_file, caption=f"Scripts for {title}")
@@ -115,8 +149,12 @@ def run_automation(video_data=None):
     if video_data:
         video_id = video_data.get('yt_videoid') or video_data.get('id')
         title = video_data.get('title', 'Unknown')
-        process_short_approval(video_id, title)
+        include_sources = video_data.get('include_sources', False)
+        process_short_approval(video_id, title, include_sources=include_sources)
         return
+
+    from src.watcher import SeenManager
+    manager = SeenManager(mongo_uri=Config.MONGO_URI)
 
     all_shorts = []
     for channel_id in Config.CHANNELS:
@@ -124,6 +162,12 @@ def run_automation(video_data=None):
         shorts = fetch_feed(channel_id)
         for short in shorts:
             video_id = short.get('yt_videoid')
+            if not video_id:
+                continue
+            if manager.is_seen(video_id):
+                print(f"Skipping already recommended/seen video: {video_id}")
+                continue
+            
             metrics = fetch_video_metrics(video_id)
             short['views'] = metrics['views']
             # Convert publish_date to timestamp
@@ -149,6 +193,7 @@ def run_automation(video_data=None):
     for i, video in enumerate(top_n):
         print(f"Sending recommendation {i+1}: {video['title']} (Velocity: {video.get('velocity', 0):.2f})")
         send_approval_request(video)
+        manager.add_seen(video['yt_videoid'], title=video['title'])
         
     print(f"Sent {len(top_n)} approval requests to Telegram. Waiting for user to click GO on any of them...")
 

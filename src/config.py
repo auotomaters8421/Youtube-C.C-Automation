@@ -59,3 +59,38 @@ class Config:
         missing = [key for key in mandatory_keys if not getattr(cls, key)]
         if missing:
             logging.warning(f"Missing mandatory configuration keys: {', '.join(missing)}")
+
+    @classmethod
+    def add_channel(cls, channel_id: str) -> bool:
+        """
+        Permanently adds a channel ID to runtime config and updates the .env file.
+        """
+        if channel_id not in cls.CHANNELS:
+            cls.CHANNELS.append(channel_id)
+            env_path = ".env"
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    channels_line_idx = -1
+                    for idx, line in enumerate(lines):
+                        if line.strip().startswith("CHANNELS="):
+                            channels_line_idx = idx
+                            break
+                    if channels_line_idx != -1:
+                        curr_line = lines[channels_line_idx].strip()
+                        curr_val = curr_line.split("=", 1)[1].strip("\"'")
+                        if curr_val:
+                            new_val = f"{curr_val},{channel_id}"
+                        else:
+                            new_val = channel_id
+                        lines[channels_line_idx] = f'CHANNELS="{new_val}"\n'
+                    else:
+                        lines.append(f'\nCHANNELS="{channel_id}"\n')
+                    with open(env_path, "w", encoding="utf-8") as f:
+                        f.writelines(lines)
+                except Exception as e:
+                    logging.error(f"Failed to persist channel to .env: {e}")
+            return True
+        return False
+

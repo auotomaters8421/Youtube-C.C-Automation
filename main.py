@@ -76,16 +76,21 @@ def main():
     # We do this after threads start to ensure web server is up
     run_scheduled_automation()
     
-    try:
-        # 6. Start the Telegram bot (BLOCKING)
-        # We run the bot in the main thread because it handles signals (Ctrl+C) better
-        logging.info("Starting Telegram bot handler (Blocking)...")
-        start_bot(run=True)
-            
-    except KeyboardInterrupt:
-        logging.info("Bot stopped by user.")
-    except Exception as e:
-        logging.error(f"Critical error in main loop: {e}")
+    bot_retry_delay = 10
+    while True:
+        try:
+            # 6. Start the Telegram bot (BLOCKING)
+            # We run the bot in the main thread because it handles signals (Ctrl+C) better
+            logging.info("Starting Telegram bot handler (Blocking)...")
+            start_bot(run=True)
+            break
+        except KeyboardInterrupt:
+            logging.info("Bot stopped by user.")
+            break
+        except Exception as e:
+            logging.error(f"Critical error in bot loop: {e}. Retrying in {bot_retry_delay} seconds...")
+            time.sleep(bot_retry_delay)
+
 
 if __name__ == "__main__":
     main()
