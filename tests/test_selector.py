@@ -19,10 +19,11 @@ def test_select_topic():
         mock_response.text = expected_topic
         mock_instance.generate_content.return_value = mock_response
         
+        from src.config import Config
         result = select_topic(mock_videos)
         
         assert result == expected_topic
-        MockModel.assert_called_once_with('gemini-1.5-flash')
+        MockModel.assert_called_once_with(Config.GEMINI_MODEL)
         mock_instance.generate_content.assert_called_once()
         # Verify the prompt contains video info
         args, kwargs = mock_instance.generate_content.call_args

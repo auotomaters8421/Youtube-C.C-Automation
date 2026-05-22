@@ -1,9 +1,9 @@
 services:
-  - type: worker
-    name: youtube-automation-worker
+  - type: web
+    name: youtube-automation-web
     env: python
     region: ohio # Default region, can be changed
-    plan: starter # Render starter plan supports background workers
+    plan: free # Render free plan supports web services
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
     envVars:
@@ -11,8 +11,8 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: SEEN_VIDEOS_PATH
-        value: /data/seen_videos.json
-    disk:
-      name: seen-videos-storage
-      mountPath: /data
-      sizeGB: 1
+        value: data/seen_videos.json
+      # All generated scripts and MP3s go to the local directory inside the container
+      - key: OUTPUT_DIR
+        value: output
+

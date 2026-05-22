@@ -31,9 +31,12 @@ def read_root():
     }
 
 def run_web_server():
-    """Runs the FastAPI server on port 7860."""
-    logging.info("Starting Heartbeat Web Server on port 7860...")
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    """Runs the FastAPI server on port 7860 or PORT env var."""
+    import os
+    port = int(os.getenv("PORT", "7860"))
+    logging.info(f"Starting Heartbeat Web Server on port {port}...")
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 # --- AUTOMATION LOGIC ---
 

@@ -4,7 +4,7 @@ import os
 import asyncio
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, ContextTypes, filters
 from src.config import Config
 
 def extract_video_id(url: str) -> str:
@@ -129,7 +129,7 @@ async def find_visuals(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         # 2. Extract search query using Gemini
         genai.configure(api_key=Config.GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel(Config.GEMINI_FLASH_MODEL)
         prompt = f"Analyze the following script and extract the most relevant search query (just 2-5 words) to find the official blog post, official website, or visual sources for the AI tool or topic mentioned. Return ONLY the search query string, nothing else. Script: {script_text}"
         
         response = model.generate_content(prompt)
@@ -269,7 +269,7 @@ def send_audio(file_path, caption=None, title=None):
 
 def send_approval_request(video):
     """
-    Sends an approval request with Approve and Reject buttons for a specific video.
+    Sends an approval request with a Tag for tagging-based approval.
     """
     token = Config.TELEGRAM_BOT_TOKEN
     chat_id = Config.TELEGRAM_CHAT_ID
@@ -282,27 +282,24 @@ def send_approval_request(video):
     
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     
-    # Dual button keyboard
-    keyboard = {
-        "inline_keyboard": [[
-            {"text": "✅ Approve", "callback_data": f"approve|{video_id}"},
-            {"text": "❌ Reject", "callback_data": f"reject|{video_id}"}
-        ]]
-    }
+    tag = f"#video_{video_id}"
     
     text = (
         f"🎬 *New Top Recommendation*\n\n"
         f"*Title:* {title}\n"
         f"*Views:* {video.get('views', 0):,}\n"
         f"*Link:* [YouTube](https://youtube.com/watch?v={video_id})\n\n"
-        f"Would you like to start production?"
+        f"🏷️ *Tag:* `{tag}`\n\n"
+        f"To start production:\n"
+        f"1. *Reply* to this message with `approve` or `reject`\n"
+        f"2. Or *type* `{tag} approve` anywhere in the chat."
     )
     
     payload = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "Markdown",
-        "reply_markup": keyboard
+        "disable_web_page_preview": True
     }
     
     try:
@@ -361,6 +358,139 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 2. Update message to confirm rejection
         await query.edit_message_text(text="🗑️ *Recommendation Discarded.*")
 
+async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles plain text messages sent to the bot:
+    1. YouTube URLs directly pasted -> Inspiration Mode (Auto-Cloning).
+    2. Replies to bot recommendation messages with "approve"/"reject".
+    3. Explicit "#video_ID approve" patterns typed directly.
+    """
+    if not update.message or not update.message.text:
+        return
+
+    text = update.message.text.strip()
+    
+    # --- 1. Detect Direct YouTube / Shorts URLs (Inspiration mode) ---
+    video_id = extract_video_id(text)
+    if video_id:
+        title = fetch_video_title(video_id)
+        await update.message.reply_text(
+            f"🎯 *Inspiration Mode Detected!*\n\n"
+            f"*Original Title:* {title}\n"
+            f"Fetching transcript and preparing upgraded copy with different psychological hooks...",
+            parse_mode="Markdown"
+        )
+        
+        # Offload cloning to thread to keep bot fully responsive
+        from src.orchestrator import process_inspiration_url
+        import threading
+        thread = threading.Thread(target=process_inspiration_url, args=(video_id, title))
+        thread.start()
+        return
+
+    # --- 2. Detect Reply-Based Approvals ---
+    if update.message.reply_to_message and update.message.reply_to_message.text:
+        parent_text = update.message.reply_to_message.text
+        
+        # 2A. Reply to automatic feed recommendation
+        match = re.search(r"#video_([a-zA-Z0-9_-]{11})", parent_text)
+        if match:
+            video_id = match.group(1)
+            action = text.lower()
+            
+            # Fetch video title from parent message
+            video_title = video_id
+            title_match = re.search(r"Title:\s*(.*)", parent_text)
+            if title_match:
+                video_title = title_match.group(1).strip()
+                
+            if "approve" in action:
+                await update.message.reply_text(
+                    f"✅ *Tag Approved via Reply!*\nStarting Production for video `{video_id}`...",
+                    parse_mode="Markdown"
+                )
+                from src.orchestrator import process_short_approval
+                import threading
+                thread = threading.Thread(target=process_short_approval, args=(video_id, video_title))
+                thread.start()
+                return
+            elif "reject" in action:
+                await update.message.reply_text(
+                    f"🗑️ *Tag Rejected via Reply.*\nDiscarded recommendation: `{video_title}`",
+                    parse_mode="Markdown"
+                )
+                return
+
+        # 2B. Reply to inspiration draft review
+        insp_match = re.search(r"#insp_approve_([a-zA-Z0-9_-]{11})", parent_text)
+        if insp_match:
+            video_id = insp_match.group(1)
+            action = text.lower()
+            
+            if "approve" in action:
+                await update.message.reply_text(
+                    f"✅ *Inspiration Script Approved via Reply!*\nGenerating TTS voice audio for video `{video_id}`...",
+                    parse_mode="Markdown"
+                )
+                from src.orchestrator import process_inspiration_approval
+                import threading
+                thread = threading.Thread(target=process_inspiration_approval, args=(video_id,))
+                thread.start()
+                return
+            elif "reject" in action:
+                await update.message.reply_text(
+                    f"🗑️ *Inspiration Script Rejected via Reply.*\nDiscarded copy for video ID `{video_id}`.",
+                    parse_mode="Markdown"
+                )
+                return
+
+    # --- 3. Detect Explicit Hashtag Approval Patterns ---
+    
+    # 3A. Explicit automatic recommendation approval (#video_XXXX approve)
+    hashtag_match = re.search(r"#video_([a-zA-Z0-9_-]{11})\s+(approve|reject)", text, re.IGNORECASE)
+    if hashtag_match:
+        video_id = hashtag_match.group(1)
+        action = hashtag_match.group(2).lower()
+        video_title = fetch_video_title(video_id)
+        
+        if action == "approve":
+            await update.message.reply_text(
+                f"✅ *Tag Approved via Explicit Tag!*\nStarting Production for video `{video_id}`...",
+                parse_mode="Markdown"
+            )
+            from src.orchestrator import process_short_approval
+            import threading
+            thread = threading.Thread(target=process_short_approval, args=(video_id, video_title))
+            thread.start()
+        else:
+            await update.message.reply_text(
+                f"🗑️ *Tag Rejected via Explicit Tag.*\nDiscarded recommendation: `{video_title}`",
+                parse_mode="Markdown"
+            )
+        return
+
+    # 3B. Explicit inspiration approval (#insp_approve_XXXX approve)
+    insp_hashtag_match = re.search(r"#insp_approve_([a-zA-Z0-9_-]{11})\s+(approve|reject)", text, re.IGNORECASE)
+    if insp_hashtag_match:
+        video_id = insp_hashtag_match.group(1)
+        action = insp_hashtag_match.group(2).lower()
+        
+        if action == "approve":
+            await update.message.reply_text(
+                f"✅ *Inspiration Script Approved via Explicit Tag!*\nGenerating TTS voice audio for video `{video_id}`...",
+                parse_mode="Markdown"
+            )
+            from src.orchestrator import process_inspiration_approval
+            import threading
+            thread = threading.Thread(target=process_inspiration_approval, args=(video_id,))
+            thread.start()
+        else:
+            await update.message.reply_text(
+                f"🗑️ *Inspiration Script Rejected via Explicit Tag.*\nDiscarded copy for video ID `{video_id}`.",
+                parse_mode="Markdown"
+            )
+        return
+
 def start_bot(run=True):
     """
     Starts the Telegram bot to listen for approval clicks.
@@ -376,8 +506,11 @@ def start_bot(run=True):
     # Disable JobQueue if it's causing weakref issues in Python 3.13
     application = Application.builder().token(token).job_queue(None).build()
     
-    # Add handler for button callbacks (Approve/Reject)
+    # Add handler for button callbacks (Approve/Reject) (legacy fallback)
     application.add_handler(CallbackQueryHandler(handle_callback))
+    
+    # Add handler for tagging approvals and pasted YouTube inspiration URLs
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_approval))
     
     # Add handlers for runtime config updates
     application.add_handler(CommandHandler("update_inworld_key", update_inworld_key))

@@ -7,13 +7,15 @@ load_dotenv()
 
 class Config:
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.1-pro")
+    GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-1.5-flash")
     INWORLD_KEY: Optional[str] = os.getenv("INWORLD_KEY")
     INWORLD_SECRET: Optional[str] = os.getenv("INWORLD_SECRET")
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")
     DEEPGRAM_KEY: Optional[str] = os.getenv("DEEPGRAM_KEY")
     CHANNELS: List[str] = os.getenv("CHANNELS", "").split(",") if os.getenv("CHANNELS") else []
-    OUTPUT_DIR: str = "output"
+    OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "output")
 
     # Shorts Reframer Config
     INWORLD_VOICE_ID: str = os.getenv("INWORLD_VOICE_ID", "default-d010pwu587xlzwrg_tencw__coyied_voice")
