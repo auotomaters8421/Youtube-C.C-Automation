@@ -97,13 +97,26 @@ def fetch_transcript(video_id):
     try:
         api = YouTubeTranscriptApi()
         transcript_list = api.fetch(video_id)
-        return " ".join([snippet['text'] for snippet in transcript_list])
+        text_snippets = []
+        for snippet in transcript_list:
+            if hasattr(snippet, 'text'):
+                text_snippets.append(snippet.text)
+            elif isinstance(snippet, dict) and 'text' in snippet:
+                text_snippets.append(snippet['text'])
+            else:
+                try:
+                    text_snippets.append(snippet['text'])
+                except:
+                    text_snippets.append(str(snippet))
+        return " ".join(text_snippets)
     except Exception as e:
         logging.info(f"Phase 1 transcript fetch failed for {video_id}: {e}. Trying Phase 2 (Deepgram)...")
 
     # Try Phase 2: Deepgram Fallback
-    audio_base = os.path.join("/tmp", f"temp_audio_{video_id}")
-    # Use "/tmp" as it is standard for temporary files and works on Render
+    import tempfile
+    temp_dir = tempfile.gettempdir()
+    audio_base = os.path.join(temp_dir, f"temp_audio_{video_id}")
+    # Use cross-platform temporary directory which works on Windows and Render
     audio_path = None
     try:
         audio_path = download_audio(video_id, audio_base)
@@ -122,39 +135,53 @@ def download_audio(video_id, output_path):
     import yt_dlp
     import logging
     import os
+    import glob
+    
+    # Remove existing matching files if any
+    for f in glob.glob(output_path + '*'):
+        try:
+            os.remove(f)
+        except Exception as e:
+            logging.debug(f"Failed to remove old temp file {f}: {e}")
+
     ydl_opts = {
         'format': 'm4a/bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'm4a',
-        }],
-        'outtmpl': output_path,
+        'outtmpl': output_path + '.%(ext)s',
         'quiet': True,
         'no_warnings': True,
+        'nocheckcertificate': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios']
+            }
+        }
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
         
-        # Robust path checking: yt-dlp with the above options usually 
-        # produces output_path.m4a
-        potential_path = f"{output_path}.m4a"
-        if os.path.exists(potential_path):
-            return potential_path
-        
-        if os.path.exists(output_path):
-            return output_path
+        # Find the downloaded file using glob
+        downloaded_files = glob.glob(output_path + '*')
+        if downloaded_files:
+            # Return the first found file path
+            return downloaded_files[0]
             
-        logging.error(f"Download succeeded but file not found at {potential_path}")
+        logging.error(f"Download succeeded but no file found starting with {output_path}")
         return None
     except Exception as e:
         logging.error(f"Failed to download audio for {video_id}: {e}")
         return None
 
+
 def transcribe_audio_deepgram(audio_path):
     if not Config.DEEPGRAM_KEY:
         return None
     
+    import sys
+    from unittest.mock import MagicMock
+    if 'pyaudio' not in sys.modules:
+        sys.modules['pyaudio'] = MagicMock()
+        
     from deepgram import (
         DeepgramClient,
         PrerecordedOptions,

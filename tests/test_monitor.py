@@ -84,10 +84,10 @@ def test_fetch_video_metrics():
 def test_download_audio_success():
     from src.monitor import download_audio
     with patch('yt_dlp.YoutubeDL') as mock_ydl, \
-         patch('os.path.exists') as mock_exists:
+         patch('glob.glob') as mock_glob:
         mock_instance = MagicMock()
         mock_ydl.return_value.__enter__.return_value = mock_instance
-        mock_exists.return_value = True
+        mock_glob.return_value = ["output_path.m4a"]
         
         result = download_audio("video123", "output_path")
         
