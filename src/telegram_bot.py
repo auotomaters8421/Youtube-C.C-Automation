@@ -7,6 +7,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, ContextTypes, filters
 from src.config import Config
 
+def he(text: str) -> str:
+    """HTML-escape dynamic content to prevent Telegram parse errors."""
+    return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
 def extract_video_id(url: str) -> str:
     """
     Extracts the 11-character video ID from any YouTube URL.
@@ -387,20 +391,20 @@ def send_approval_request(video):
     tag = f"#video_{video_id}"
     
     text = (
-        f"🎬 *New Top Recommendation*\n\n"
-        f"*Title:* {title}\n"
-        f"*Views:* {video.get('views', 0):,}\n"
-        f"*Link:* [YouTube](https://youtube.com/watch?v={video_id})\n\n"
-        f"🏷️ *Tag:* `{tag}`\n\n"
+        f"🎬 <b>New Top Recommendation</b>\n\n"
+        f"<b>Title:</b> {he(title)}\n"
+        f"<b>Views:</b> {video.get('views', 0):,}\n"
+        f"<b>Link:</b> <a href=\"https://youtube.com/watch?v={video_id}\">YouTube</a>\n\n"
+        f"🏷️ <b>Tag:</b> <code>{he(tag)}</code>\n\n"
         f"To start production:\n"
-        f"1. *Reply* to this message with `approve` or `reject`\n"
-        f"2. Or *type* `{tag} approve` anywhere in the chat."
+        f"1. <b>Reply</b> to this message with <code>approve</code> or <code>reject</code>\n"
+        f"2. Or <b>type</b> <code>{he(tag)} approve</code> anywhere in the chat."
     )
     
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
     
@@ -477,10 +481,10 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
     if video_id:
         title = fetch_video_title(video_id)
         await update.message.reply_text(
-            f"🎯 *Inspiration Mode Detected!*\n\n"
-            f"*Original Title:* {title}\n"
+            f"🎯 <b>Inspiration Mode Detected!</b>\n\n"
+            f"<b>Original Title:</b> {he(title)}\n"
             f"Fetching transcript and preparing upgraded copy with different psychological hooks...",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         
         # Offload cloning to thread to keep bot fully responsive
@@ -508,8 +512,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
                 
             if "approve" in action:
                 await update.message.reply_text(
-                    f"✅ *Tag Approved via Reply!*\nStarting Production for video `{video_id}`...",
-                    parse_mode="Markdown"
+                    f"✅ <b>Tag Approved via Reply!</b>\nStarting Production for video <code>{he(video_id)}</code>...",
+                    parse_mode="HTML"
                 )
                 from src.orchestrator import process_short_approval
                 import threading
@@ -518,8 +522,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
             elif "reject" in action:
                 await update.message.reply_text(
-                    f"🗑️ *Tag Rejected via Reply.*\nDiscarded recommendation: `{video_title}`",
-                    parse_mode="Markdown"
+                    f"🗑️ <b>Tag Rejected via Reply.</b>\nDiscarded recommendation: <code>{he(video_title)}</code>",
+                    parse_mode="HTML"
                 )
                 return
 
@@ -531,8 +535,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
             
             if "approve" in action:
                 await update.message.reply_text(
-                    f"✅ *Inspiration Script Approved via Reply!*\nGenerating TTS voice audio for video `{video_id}`...",
-                    parse_mode="Markdown"
+                    f"✅ <b>Inspiration Script Approved via Reply!</b>\nGenerating TTS voice audio for video <code>{he(video_id)}</code>...",
+                    parse_mode="HTML"
                 )
                 from src.orchestrator import process_inspiration_approval
                 import threading
@@ -541,8 +545,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
             elif "reject" in action:
                 await update.message.reply_text(
-                    f"🗑️ *Inspiration Script Rejected via Reply.*\nDiscarded copy for video ID `{video_id}`.",
-                    parse_mode="Markdown"
+                    f"🗑️ <b>Inspiration Script Rejected via Reply.</b>\nDiscarded copy for video ID <code>{he(video_id)}</code>.",
+                    parse_mode="HTML"
                 )
                 return
 
@@ -557,8 +561,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
         
         if action == "approve":
             await update.message.reply_text(
-                f"✅ *Tag Approved via Explicit Tag!*\nStarting Production for video `{video_id}`...",
-                parse_mode="Markdown"
+                f"✅ <b>Tag Approved via Explicit Tag!</b>\nStarting Production for video <code>{he(video_id)}</code>...",
+                parse_mode="HTML"
             )
             from src.orchestrator import process_short_approval
             import threading
@@ -566,8 +570,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
             thread.start()
         else:
             await update.message.reply_text(
-                f"🗑️ *Tag Rejected via Explicit Tag.*\nDiscarded recommendation: `{video_title}`",
-                parse_mode="Markdown"
+                f"🗑️ <b>Tag Rejected via Explicit Tag.</b>\nDiscarded recommendation: <code>{he(video_title)}</code>",
+                parse_mode="HTML"
             )
         return
 
@@ -579,8 +583,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
         
         if action == "approve":
             await update.message.reply_text(
-                f"✅ *Inspiration Script Approved via Explicit Tag!*\nGenerating TTS voice audio for video `{video_id}`...",
-                parse_mode="Markdown"
+                f"✅ <b>Inspiration Script Approved via Explicit Tag!</b>\nGenerating TTS voice audio for video <code>{he(video_id)}</code>...",
+                parse_mode="HTML"
             )
             from src.orchestrator import process_inspiration_approval
             import threading
@@ -588,8 +592,8 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
             thread.start()
         else:
             await update.message.reply_text(
-                f"🗑️ *Inspiration Script Rejected via Explicit Tag.*\nDiscarded copy for video ID `{video_id}`.",
-                parse_mode="Markdown"
+                f"🗑️ <b>Inspiration Script Rejected via Explicit Tag.</b>\nDiscarded copy for video ID <code>{he(video_id)}</code>.",
+                parse_mode="HTML"
             )
         return
 
