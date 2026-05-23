@@ -4,7 +4,7 @@ services:
     env: python
     region: ohio # Default region, can be changed
     plan: free # Render free plan supports web services
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && pip install -U yt-dlp
     startCommand: python main.py
     envVars:
       - fromGroup: youtube-automation-secrets

@@ -3,6 +3,7 @@ feedparser==6.0.12
 requests==2.32.5
 python-dotenv==1.0.1
 pytest==8.3.3
+pytest-asyncio==0.24.0
 youtube-transcript-api==1.2.4
 python-telegram-bot==21.1
 schedule==1.2.2
@@ -10,6 +11,6 @@ pymongo==4.10.1
 dnspython==2.7.0
 fastapi==0.115.0
 uvicorn==0.31.0
-yt-dlp>=2025.1.15
+yt-dlp>=2025.5.1
 deepgram-sdk==3.3.0
 duckduckgo-search>=5.3.0

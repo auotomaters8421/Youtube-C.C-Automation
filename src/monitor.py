@@ -5,6 +5,32 @@ import os
 from youtube_transcript_api import YouTubeTranscriptApi
 from src.config import Config
 
+
+def fetch_transcript_supadata(video_id: str) -> str | None:
+    """
+    Phase 1.5: Fetches transcript via Supadata API (free, no auth).
+    Bypasses YouTube bot detection by fetching from their servers.
+    Docs: https://supadata.ai/documentation/youtube/get-transcript
+    """
+    import logging
+    try:
+        url = f"https://api.supadata.ai/v1/youtube/transcript?videoId={video_id}&text=true"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        resp = requests.get(url, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Response shape: {"content": "...", "lang": "en", ...}
+            content = data.get("content", "") or ""
+            if content.strip():
+                logging.info(f"Phase 1.5 (Supadata): Got transcript for {video_id} ({len(content)} chars)")
+                return content.strip()
+        logging.warning(f"Phase 1.5 (Supadata): No transcript for {video_id} (status={resp.status_code})")
+    except Exception as e:
+        logging.warning(f"Phase 1.5 (Supadata) failed for {video_id}: {e}")
+    return None
+
 def is_short(video_id):
     """
     Checks if a video is a YouTube Short by probing the shorts URL.
@@ -115,6 +141,12 @@ def fetch_transcript(video_id):
     except Exception as e:
         logging.info(f"Phase 1 transcript fetch failed for {video_id}: {e}. Trying Phase 2 (Deepgram)...")
 
+    # --- Phase 1.5: Supadata API (free, no bot-check) ---
+    transcript = fetch_transcript_supadata(video_id)
+    if transcript:
+        return transcript
+    logging.warning(f"Phase 1.5 (Supadata) gave nothing for {video_id}. Trying Phase 2 (Deepgram)...")
+
     # Try Phase 2: Deepgram Fallback
     import tempfile
     temp_dir = tempfile.gettempdir()
@@ -159,17 +191,45 @@ def download_audio(video_id, output_path):
     ffmpeg_available = shutil.which("ffmpeg") is not None
 
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': output_path + '.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,
+        'no_warnings': False,
         'nocheckcertificate': True,
+        # Rotate through clients most likely to bypass bot check in cloud env
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web']
+                'player_client': ['tv_embedded', 'android_vr', 'android', 'ios', 'web']
             }
-        }
+        },
+        # Throttle/sleep to avoid immediate bot detection
+        'sleep_interval': 1,
+        'max_sleep_interval': 3,
+        # Browser-like HTTP headers
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 4 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
     }
+    
+    if Config.YOUTUBE_COOKIES_PATH and os.path.exists(Config.YOUTUBE_COOKIES_PATH):
+        ydl_opts['cookiefile'] = Config.YOUTUBE_COOKIES_PATH
+        logging.info(f"Using YouTube cookies from: {Config.YOUTUBE_COOKIES_PATH}")
+    elif Config.YOUTUBE_COOKIES_BASE64:
+        import base64
+        import tempfile
+        try:
+            # Decode base64 cookies to a temporary file
+            cookie_data = base64.b64decode(Config.YOUTUBE_COOKIES_BASE64)
+            temp_cookie_file = os.path.join(tempfile.gettempdir(), f"youtube_cookies_{video_id}.txt")
+            with open(temp_cookie_file, "wb") as f:
+                f.write(cookie_data)
+            ydl_opts['cookiefile'] = temp_cookie_file
+            logging.info(f"Using YouTube cookies from decoded Base64 string.")
+            # Note: We don't delete it immediately as yt-dlp needs it during download
+        except Exception as e:
+            logging.error(f"Failed to decode YOUTUBE_COOKIES_BASE64: {e}")
     
     if ffmpeg_available:
         ydl_opts['postprocessors'] = [{
