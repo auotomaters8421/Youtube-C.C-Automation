@@ -108,7 +108,10 @@ def fetch_transcript(video_id):
                     text_snippets.append(snippet['text'])
                 except:
                     text_snippets.append(str(snippet))
-        return " ".join(text_snippets)
+        result = " ".join(text_snippets).strip()
+        if result:
+            return result
+        logging.warning(f"Phase 1 returned empty transcript for {video_id}. Trying Phase 2...")
     except Exception as e:
         logging.info(f"Phase 1 transcript fetch failed for {video_id}: {e}. Trying Phase 2 (Deepgram)...")
 
@@ -120,16 +123,24 @@ def fetch_transcript(video_id):
     audio_path = None
     try:
         audio_path = download_audio(video_id, audio_base)
-        if audio_path:
-            transcript = transcribe_audio_deepgram(audio_path)
-            return transcript
+        if not audio_path:
+            logging.error(f"Phase 2: Audio download returned no file for {video_id}")
+            return None
+        transcript = transcribe_audio_deepgram(audio_path)
+        # Validate transcript is non-empty and not just whitespace
+        if transcript and transcript.strip():
+            return transcript.strip()
+        logging.error(f"Phase 2: Deepgram returned empty/null transcript for {video_id}")
         return None
     except Exception as fallback_err:
         logging.error(f"Phase 2 transcript fetch failed for {video_id}: {fallback_err}")
         return None
     finally:
         if audio_path and os.path.exists(audio_path):
-            os.remove(audio_path)
+            try:
+                os.remove(audio_path)
+            except OSError as cleanup_err:
+                logging.debug(f"Failed to cleanup temp audio {audio_path}: {cleanup_err}")
 
 def download_audio(video_id, output_path):
     import yt_dlp
@@ -144,18 +155,31 @@ def download_audio(video_id, output_path):
         except Exception as e:
             logging.debug(f"Failed to remove old temp file {f}: {e}")
 
+    import shutil
+    ffmpeg_available = shutil.which("ffmpeg") is not None
+
     ydl_opts = {
-        'format': 'm4a/bestaudio/best',
+        'format': 'bestaudio/best',
         'outtmpl': output_path + '.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios']
+                'player_client': ['android', 'ios', 'web']
             }
         }
     }
+    
+    if ffmpeg_available:
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
+    else:
+        logging.info("ffmpeg not found on PATH. Downloading audio in raw format without conversion.")
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
@@ -163,8 +187,15 @@ def download_audio(video_id, output_path):
         # Find the downloaded file using glob
         downloaded_files = glob.glob(output_path + '*')
         if downloaded_files:
-            # Return the first found file path
-            return downloaded_files[0]
+            audio_file = downloaded_files[0]
+            # Validate file is non-empty
+            file_size = os.path.getsize(audio_file)
+            if file_size == 0:
+                logging.error(f"Downloaded audio file is 0 bytes for {video_id}: {audio_file}")
+                os.remove(audio_file)
+                return None
+            logging.info(f"Audio downloaded for {video_id}: {audio_file} ({file_size} bytes)")
+            return audio_file
             
         logging.error(f"Download succeeded but no file found starting with {output_path}")
         return None
@@ -174,7 +205,20 @@ def download_audio(video_id, output_path):
 
 
 def transcribe_audio_deepgram(audio_path):
+    import logging
+    
     if not Config.DEEPGRAM_KEY:
+        logging.error("Deepgram API key is not configured. Skipping transcription.")
+        return None
+    
+    # Validate file exists and is non-empty before sending to Deepgram
+    if not os.path.exists(audio_path):
+        logging.error(f"Audio file does not exist: {audio_path}")
+        return None
+    
+    file_size = os.path.getsize(audio_path)
+    if file_size == 0:
+        logging.error(f"Audio file is empty (0 bytes): {audio_path}")
         return None
     
     import sys
@@ -192,28 +236,52 @@ def transcribe_audio_deepgram(audio_path):
         with open(audio_path, "rb") as file:
             buffer_data = file.read()
         
-        payload: FileSource = {"buffer": buffer_data}
+        # Detect mimetype from file extension
+        ext = os.path.splitext(audio_path)[1].lower()
+        mime_map = {
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.webm': 'audio/webm',
+            '.wav': 'audio/wav',
+            '.ogg': 'audio/ogg',
+            '.flac': 'audio/flac',
+        }
+        mimetype = mime_map.get(ext, 'audio/mpeg')
+        
+        payload: FileSource = {"buffer": buffer_data, "mimetype": mimetype}
         options = PrerecordedOptions(
             model="nova-2",
             smart_format=True,
+            language="en",
         )
         
+        logging.info(f"Sending {file_size} bytes ({mimetype}) to Deepgram for transcription...")
         response = deepgram.listen.prerecorded.v("1").transcribe_file(payload, options)
         
         # Safely check response structure
         if not response or not hasattr(response, 'results'):
+            logging.error("Deepgram returned no results object")
             return None
             
         results = response.results
         if not hasattr(results, 'channels') or not results.channels:
+            logging.error("Deepgram returned no channels in results")
             return None
             
         channel = results.channels[0]
         if not hasattr(channel, 'alternatives') or not channel.alternatives:
+            logging.error("Deepgram returned no alternatives in channel")
             return None
-            
-        return channel.alternatives[0].transcript
+        
+        transcript = channel.alternatives[0].transcript
+        
+        # Validate transcript is meaningful
+        if not transcript or not transcript.strip():
+            logging.warning(f"Deepgram returned empty transcript for {audio_path}")
+            return None
+        
+        logging.info(f"Deepgram transcription successful: {len(transcript)} chars")
+        return transcript.strip()
     except Exception as e:
-        import logging
         logging.error(f"Deepgram Error: {e}")
         return None

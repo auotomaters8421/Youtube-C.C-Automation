@@ -84,15 +84,34 @@ def test_fetch_video_metrics():
 def test_download_audio_success():
     from src.monitor import download_audio
     with patch('yt_dlp.YoutubeDL') as mock_ydl, \
-         patch('glob.glob') as mock_glob:
+         patch('glob.glob') as mock_glob, \
+         patch('os.path.getsize') as mock_getsize:
         mock_instance = MagicMock()
         mock_ydl.return_value.__enter__.return_value = mock_instance
-        mock_glob.return_value = ["output_path.m4a"]
+        mock_glob.return_value = ["output_path.mp3"]
+        mock_getsize.return_value = 50000  # 50KB non-empty file
         
         result = download_audio("video123", "output_path")
         
         mock_instance.download.assert_called_once_with(["https://www.youtube.com/watch?v=video123"])
-        assert result == "output_path.m4a"
+        assert result == "output_path.mp3"
+
+def test_download_audio_zero_bytes():
+    """Downloads that produce 0-byte files should return None."""
+    from src.monitor import download_audio
+    with patch('yt_dlp.YoutubeDL') as mock_ydl, \
+         patch('glob.glob') as mock_glob, \
+         patch('os.path.getsize') as mock_getsize, \
+         patch('os.remove') as mock_remove:
+        mock_instance = MagicMock()
+        mock_ydl.return_value.__enter__.return_value = mock_instance
+        mock_glob.return_value = ["output_path.mp3"]
+        mock_getsize.return_value = 0  # 0-byte file
+        
+        result = download_audio("video123", "output_path")
+        
+        assert result is None
+        mock_remove.assert_called_with("output_path.mp3")
 
 def test_download_audio_failure():
     from src.monitor import download_audio
@@ -125,10 +144,60 @@ def test_transcribe_audio_deepgram_success():
         ]
         mock_deepgram.listen.prerecorded.v.return_value.transcribe_file.return_value = mock_response
         
-        # Mock built-in open
-        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))):
-            result = transcribe_audio_deepgram("dummy_path")
+        # Mock built-in open and os functions for file validation
+        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.path.getsize", return_value=1024):
+            result = transcribe_audio_deepgram("dummy_path.mp3")
             assert result == "Deepgram Transcript"
+
+def test_transcribe_audio_deepgram_empty_transcript():
+    """Deepgram returning an empty string should be treated as failure."""
+    from src.monitor import transcribe_audio_deepgram
+    from src.config import Config
+    Config.DEEPGRAM_KEY = "test_key"
+    
+    with patch.dict('sys.modules', {'deepgram': MagicMock()}):
+        import deepgram
+        mock_client = deepgram.DeepgramClient
+        mock_deepgram = MagicMock()
+        mock_client.return_value = mock_deepgram
+        
+        mock_response = MagicMock()
+        mock_response.results.channels = [
+            MagicMock(alternatives=[MagicMock(transcript="")])  # Empty string
+        ]
+        mock_deepgram.listen.prerecorded.v.return_value.transcribe_file.return_value = mock_response
+        
+        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.path.getsize", return_value=1024):
+            result = transcribe_audio_deepgram("dummy_path.mp3")
+            assert result is None
+
+def test_transcribe_audio_deepgram_whitespace_transcript():
+    """Deepgram returning whitespace-only string should be treated as failure."""
+    from src.monitor import transcribe_audio_deepgram
+    from src.config import Config
+    Config.DEEPGRAM_KEY = "test_key"
+    
+    with patch.dict('sys.modules', {'deepgram': MagicMock()}):
+        import deepgram
+        mock_client = deepgram.DeepgramClient
+        mock_deepgram = MagicMock()
+        mock_client.return_value = mock_deepgram
+        
+        mock_response = MagicMock()
+        mock_response.results.channels = [
+            MagicMock(alternatives=[MagicMock(transcript="   ")])  # Whitespace only
+        ]
+        mock_deepgram.listen.prerecorded.v.return_value.transcribe_file.return_value = mock_response
+        
+        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.path.getsize", return_value=1024):
+            result = transcribe_audio_deepgram("dummy_path.mp3")
+            assert result is None
 
 def test_transcribe_audio_deepgram_invalid_response():
     from src.monitor import transcribe_audio_deepgram
@@ -147,9 +216,11 @@ def test_transcribe_audio_deepgram_invalid_response():
         mock_response.results.channels = [] # Empty channels
         mock_deepgram.listen.prerecorded.v.return_value.transcribe_file.return_value = mock_response
         
-        # Mock built-in open
-        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))):
-            result = transcribe_audio_deepgram("dummy_path")
+        # Mock built-in open and os functions for file validation
+        with patch("builtins.open", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"audio data")))))), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.path.getsize", return_value=1024):
+            result = transcribe_audio_deepgram("dummy_path.mp3")
             assert result is None
 
 def test_transcribe_audio_deepgram_no_key():
@@ -165,3 +236,63 @@ def test_transcribe_audio_deepgram_no_key():
             assert result is None
     finally:
         Config.DEEPGRAM_KEY = original_key
+
+def test_fetch_transcript_strips_whitespace():
+    """fetch_transcript should strip whitespace from Phase 2 results."""
+    from src.monitor import fetch_transcript
+    with patch('src.monitor.YouTubeTranscriptApi') as mock_api_class:
+        mock_api_instance = mock_api_class.return_value
+        mock_api_instance.fetch.side_effect = Exception("Phase 1 Failed")
+        
+        with patch('src.monitor.download_audio') as mock_download, \
+             patch('src.monitor.transcribe_audio_deepgram') as mock_transcribe, \
+             patch('os.path.exists') as mock_exists, \
+             patch('os.remove') as mock_remove:
+            
+            mock_download.return_value = "/tmp/temp_audio.mp3"
+            mock_transcribe.return_value = "  Valid transcript with spaces  "
+            mock_exists.return_value = True
+            
+            result = fetch_transcript("test_video")
+            assert result == "Valid transcript with spaces"
+
+def test_download_audio_ffmpeg_missing():
+    """Verify that when ffmpeg is missing, download_audio omits postprocessors."""
+    from src.monitor import download_audio
+    with patch('shutil.which', return_value=None) as mock_which, \
+         patch('yt_dlp.YoutubeDL') as mock_ydl, \
+         patch('glob.glob', return_value=["output_path.m4a"]), \
+         patch('os.path.getsize', return_value=50000):
+        
+        mock_instance = MagicMock()
+        mock_ydl.return_value.__enter__.return_value = mock_instance
+        
+        result = download_audio("video123", "output_path")
+        
+        # Verify shutil.which was called to check for ffmpeg
+        mock_which.assert_called_with("ffmpeg")
+        
+        # Verify YoutubeDL was instantiated without postprocessors
+        called_opts = mock_ydl.call_args[0][0]
+        assert 'postprocessors' not in called_opts
+        assert result == "output_path.m4a"
+
+def test_download_audio_ffmpeg_present():
+    """Verify that when ffmpeg is present, download_audio includes postprocessors."""
+    from src.monitor import download_audio
+    with patch('shutil.which', return_value="/usr/bin/ffmpeg") as mock_which, \
+         patch('yt_dlp.YoutubeDL') as mock_ydl, \
+         patch('glob.glob', return_value=["output_path.mp3"]), \
+         patch('os.path.getsize', return_value=50000):
+        
+        mock_instance = MagicMock()
+        mock_ydl.return_value.__enter__.return_value = mock_instance
+        
+        result = download_audio("video123", "output_path")
+        
+        called_opts = mock_ydl.call_args[0][0]
+        assert 'postprocessors' in called_opts
+        assert called_opts['postprocessors'][0]['key'] == 'FFmpegExtractAudio'
+        assert result == "output_path.mp3"
+
+

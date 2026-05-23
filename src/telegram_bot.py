@@ -37,22 +37,83 @@ def fetch_video_title(video_id: str) -> str:
             title = m.group(1)
             if title.endswith(" - YouTube"):
                 title = title[:-10]
-            return title
+            if title.strip():
+                return title.strip()
         # Try name="title"
         m = re.search(r'<meta name="title" content="([^"]+)">', r.text)
         if m:
-            return m.group(1)
+            title = m.group(1)
+            if title.strip():
+                return title.strip()
         # Try title tag
         m = re.search(r'<title>(.*?)</title>', r.text)
         if m:
             title = m.group(1)
             if title.endswith(" - YouTube"):
                 title = title[:-10]
-            return title
+            if title.strip():
+                return title.strip()
     except Exception as e:
         print(f"Error fetching title for {video_id}: {e}")
     return f"YouTube Video {video_id}"
 
+def resolve_video_id(video_id: str) -> str:
+    """
+    Resolves a possibly mistyped video ID (due to case sensitivity or visual homoglyphs
+    like I vs l vs 1, 0 vs O vs o) against historically recommended/seen videos.
+    Returns the resolved case-sensitive correct video_id if found, otherwise the original.
+    """
+    if not video_id:
+        return video_id
+        
+    def get_homoglyphs(s):
+        s_lower = s.lower()
+        # l, i, 1, | -> 1
+        s_lower = s_lower.replace('l', '1').replace('i', '1').replace('|', '1')
+        # o, 0 -> 0
+        s_lower = s_lower.replace('o', '0')
+        return s_lower
+
+    from src.watcher import SeenManager
+    import json
+    manager = SeenManager(mongo_uri=Config.MONGO_URI)
+    
+    seen_ids = []
+    if manager.use_mongo:
+        try:
+            cursor = manager.collection.find().sort("timestamp", -1).limit(200)
+            seen_ids = [doc["video_id"] for doc in cursor if "video_id" in doc]
+        except Exception as e:
+            print(f"Error fetching from MongoDB for resolution: {e}")
+    
+    # Fallback/always include JSON cache
+    if not seen_ids or not manager.use_mongo:
+        if os.path.exists(Config.SEEN_VIDEOS_PATH):
+            try:
+                with open(Config.SEEN_VIDEOS_PATH, "r") as f:
+                    seen_ids.extend(json.load(f))
+            except:
+                pass
+                
+    # 1. Exact match check
+    if video_id in seen_ids:
+        return video_id
+        
+    # 2. Case-insensitive match check
+    video_id_lower = video_id.lower()
+    for sid in seen_ids:
+        if sid.lower() == video_id_lower:
+            print(f"Resolved case-insensitive video ID match: {video_id} -> {sid}")
+            return sid
+            
+    # 3. Visually confusing homoglyphs check
+    target_homo = get_homoglyphs(video_id)
+    for sid in seen_ids:
+        if get_homoglyphs(sid) == target_homo:
+            print(f"Resolved visual homoglyph video ID match: {video_id} -> {sid}")
+            return sid
+            
+    return video_id
 
 async def update_inworld_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Updates the Inworld API Key at runtime."""
@@ -89,6 +150,47 @@ async def update_deepgram_key(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_key = context.args[0]
     Config.update_runtime_config("DEEPGRAM_KEY", new_key)
     await update.message.reply_text("✅ *Deepgram API Key* updated for this session.", parse_mode="Markdown")
+
+async def update_gemini_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Updates the Gemini API Key at runtime and reconfigures the SDK."""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/update_gemini_key <key>`", parse_mode="Markdown")
+        return
+    new_key = context.args[0]
+    Config.update_runtime_config("GEMINI_API_KEY", new_key)
+    # Reconfigure the Gemini SDK with the new key immediately
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=new_key)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Key saved but Gemini reconfigure failed: {e}")
+        return
+    await update.message.reply_text(f"✅ *Gemini API Key* updated to: `{new_key[:5]}...`", parse_mode="Markdown")
+
+async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shows the status of all configured API keys (masked)."""
+    keys_info = [
+        ("Gemini API Key", "GEMINI_API_KEY", "/update_gemini_key"),
+        ("Inworld Key", "INWORLD_KEY", "/update_inworld_key"),
+        ("Inworld Secret", "INWORLD_SECRET", "/update_inworld_secret"),
+        ("Inworld Voice ID", "INWORLD_VOICE_ID", "/update_voice_id"),
+        ("Deepgram Key", "DEEPGRAM_KEY", "/update_deepgram_key"),
+        ("Telegram Bot Token", "TELEGRAM_BOT_TOKEN", "N/A (self-referential)"),
+        ("Telegram Chat ID", "TELEGRAM_CHAT_ID", "N/A"),
+    ]
+    lines = ["🔑 *API Key Status Dashboard*\n"]
+    for display_name, config_key, command in keys_info:
+        value = getattr(Config, config_key, None)
+        if value:
+            masked = f"`{value[:5]}...{value[-3:]}`" if len(value) > 8 else "`****`"
+            status = f"✅ Set → {masked}"
+        else:
+            status = "❌ *Not Set*"
+        lines.append(f"• *{display_name}*: {status}")
+        if not value and command != "N/A" and command != "N/A (self-referential)":
+            lines.append(f"  ↳ Fix: `{command} <value>`")
+    
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 async def find_visuals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finds visual sources based on video script."""
@@ -395,7 +497,7 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
         # 2A. Reply to automatic feed recommendation
         match = re.search(r"#video_([a-zA-Z0-9_-]{11})", parent_text)
         if match:
-            video_id = match.group(1)
+            video_id = resolve_video_id(match.group(1))
             action = text.lower()
             
             # Fetch video title from parent message
@@ -424,7 +526,7 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
         # 2B. Reply to inspiration draft review
         insp_match = re.search(r"#insp_approve_([a-zA-Z0-9_-]{11})", parent_text)
         if insp_match:
-            video_id = insp_match.group(1)
+            video_id = resolve_video_id(insp_match.group(1))
             action = text.lower()
             
             if "approve" in action:
@@ -449,7 +551,7 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
     # 3A. Explicit automatic recommendation approval (#video_XXXX approve)
     hashtag_match = re.search(r"#video_([a-zA-Z0-9_-]{11})\s+(approve|reject)", text, re.IGNORECASE)
     if hashtag_match:
-        video_id = hashtag_match.group(1)
+        video_id = resolve_video_id(hashtag_match.group(1))
         action = hashtag_match.group(2).lower()
         video_title = fetch_video_title(video_id)
         
@@ -472,7 +574,7 @@ async def handle_text_approval(update: Update, context: ContextTypes.DEFAULT_TYP
     # 3B. Explicit inspiration approval (#insp_approve_XXXX approve)
     insp_hashtag_match = re.search(r"#insp_approve_([a-zA-Z0-9_-]{11})\s+(approve|reject)", text, re.IGNORECASE)
     if insp_hashtag_match:
-        video_id = insp_hashtag_match.group(1)
+        video_id = resolve_video_id(insp_hashtag_match.group(1))
         action = insp_hashtag_match.group(2).lower()
         
         if action == "approve":
@@ -517,6 +619,8 @@ def start_bot(run=True):
     application.add_handler(CommandHandler("update_inworld_secret", update_inworld_secret))
     application.add_handler(CommandHandler("update_voice_id", update_voice_id))
     application.add_handler(CommandHandler("update_deepgram_key", update_deepgram_key))
+    application.add_handler(CommandHandler("update_gemini_key", update_gemini_key))
+    application.add_handler(CommandHandler("list_keys", list_keys))
     application.add_handler(CommandHandler("find_visuals", find_visuals))
     application.add_handler(CommandHandler("add_channel", add_channel))
     application.add_handler(CommandHandler("process_url", process_url))

@@ -4,15 +4,18 @@ import logging
 import google.generativeai as genai
 from src.config import Config
 
-# Configure Gemini at module load if key is present
-if hasattr(Config, 'GEMINI_API_KEY') and Config.GEMINI_API_KEY:
-    genai.configure(api_key=Config.GEMINI_API_KEY)
+def _ensure_gemini_configured():
+    """Configures Gemini SDK with the current API key. Called before each usage
+    so runtime key updates via /update_gemini_key take effect immediately."""
+    if Config.GEMINI_API_KEY:
+        genai.configure(api_key=Config.GEMINI_API_KEY)
 
 
 def select_topic(videos):
     """
     Analyzes a list of YouTube videos and picks the most viral topic using Gemini.
     """
+    _ensure_gemini_configured()
     model = genai.GenerativeModel(Config.GEMINI_MODEL)
     prompt = f"Analyze these YouTube videos and pick the most viral topic for an AI automation niche: {videos}"
     try:
@@ -44,6 +47,7 @@ def reframe_transcript(transcript, content_type="auto"):
     Reframes a YouTube Short transcript using Gemini Pro based on the detailed system prompt.
     Returns a dictionary with viral_version and standard_version.
     """
+    _ensure_gemini_configured()
     model = genai.GenerativeModel(
         model_name=Config.GEMINI_MODEL,
         system_instruction=Config.get_gemini_system_prompt()
@@ -80,6 +84,7 @@ def reframe_as_inspiration(transcript):
     Returns a dict with viral_version, standard_version,
     psychological_techniques_used, and inspiration_mode=True.
     """
+    _ensure_gemini_configured()
     model = genai.GenerativeModel(
         model_name=Config.GEMINI_MODEL,
         system_instruction=Config.get_gemini_system_prompt()
